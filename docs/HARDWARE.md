@@ -4,11 +4,12 @@
 
 The 8‑channel ESP‑12F WiFi relay board sold under many names (LC Technology,
 "eWeLink ESP8266 8‑Channel", "ESP12F_Relay_X8", DC 5 V or 7–28 V input,
-active‑HIGH relays). Confirmed against:
-
-- Tasmota template: <https://templates.blakadder.com/ESP12F_Relay_X8.html>
-- ESPHome device page: <https://devices.esphome.io/devices/esp-12f-relay-x8/>
-- Werner Rothschopf write‑up: <https://werner.rothschopf.net/microcontroller/202108_esp8266_esp12f_relay_x8_en.htm>
+active‑HIGH relays). The product page the user originally pointed to is
+[Fruugo — "8‑Channel ESP8266 Wireless WiFi Relay Module ESP‑12F"][fruugo];
+the listing's description is sparse and partially incorrect, so the
+authoritative pinout below is taken from the Tasmota and ESPHome device
+databases — see the [References](#references) section at the end of this
+document.
 
 > The original `.support/ESP12TCPClientV6.ino` reference sketch numbers the
 > `Relay1..Relay8` macros in **reverse** order from the board silkscreen
@@ -18,9 +19,14 @@ active‑HIGH relays). Confirmed against:
 
 ### Canonical Relay → GPIO map (silkscreen)
 
+The table below is the consensus mapping across the
+[Tasmota `ESP12F_Relay_X8` template][tasmota] and the
+[ESPHome `esp-12f-relay-x8` device page][esphome], cross‑checked against
+Werner Rothschopf's hands‑on [browser‑switch write‑up][rothschopf].
+
 | Silkscreen | GPIO | Boot behaviour | Used by this firmware |
 | --- | --- | --- | --- |
-| Relay 1 | **GPIO16** | **Pulses ON at boot** — GPIO16 floats high briefly before `setup()` drives it low | **No** (skipped — see below) |
+| Relay 1 | **GPIO16** | **Pulses ON at boot** — GPIO16 floats high briefly before `setup()` drives it low ([noted by Tasmota][tasmota]) | **No** (skipped — see below) |
 | Relay 2 | GPIO14 | clean | **Yes — 160 m** |
 | Relay 3 | GPIO12 | clean | **Yes — 80 m** |
 | Relay 4 | GPIO13 | clean | **Yes — 40 m** |
@@ -72,13 +78,16 @@ NO contact of each of the six relays above to the matching TXBPF band‑select
 input, with a common ground between the carrier and the TXBPF control PCB.
 
 When all six relays are de‑energised the TXBPF should sit in its all‑off /
-bypass state. **Verify against your specific TXBPF build** — community builds
-vary; check the schematic before applying RF.
+bypass state. **Verify against your specific TXBPF build** by cross‑checking
+with the [TXBPF groups.io community][txbpf] (gated; membership required) —
+community builds vary; check the schematic before applying RF.
 
 ### Hamation MBF‑100 BandPasser II
 
-The BandPasser II expects **+5 V to +12 V** on a per‑band input on its rear‑
-panel control connector. The relay contacts on this carrier are the right
+Per the [Hamation product page][hamation], the BandPasser II expects
+**+5 V to +12 V** on a per‑band input on its rear‑panel control connector
+and "automatically enters Bypass mode … when no power is applied or no
+filters are selected." The relay contacts on this carrier are the right
 interface:
 
 ```
@@ -141,3 +150,45 @@ high‑voltage input at the same time.
    energise on its own. Step through each band and verify the matching relay
    activates. Tune to a WARC band → all relays must drop.
 4. *Only then* connect the filter's RF and band‑select wiring.
+
+## References
+
+Sources used to verify the pinout, boot‑time behaviour, and filter control
+interfaces in this document.
+
+**Carrier board — LC Technology `ESP12F_Relay_X8`**
+
+- [Fruugo product listing — "8‑Channel ESP8266 Wireless WiFi Relay Module ESP‑12F"][fruugo]
+  — original product page that prompted this project. Description is sparse
+  and partially inaccurate; cited here only as the storefront link.
+- [Tasmota — `ESP12F_Relay_X8` template][tasmota] — authoritative
+  Relay→GPIO mapping; flags the GPIO16 / Relay 1 boot pulse.
+- [ESPHome — `esp-12f-relay-x8` device][esphome] — cross‑check of the same
+  pinout in an independent firmware project.
+- [Werner Rothschopf — "ESP8266 ESP12F Relay X8 board to switch pins with browser"][rothschopf]
+  — hands‑on confirmation of pinout, programming sequence, and active‑HIGH
+  relay logic.
+
+**ESP8266 boot strapping**
+
+The boot‑mode requirements (GPIO0 HIGH, GPIO15 LOW, GPIO2 HIGH at reset)
+are part of the ESP8266 hardware spec; see Espressif's
+[ESP8266 hardware design guidelines][esp-hw] §2.4 for the canonical
+strap‑pin table.
+
+**Filters**
+
+- [Hamation MBF‑100 BandPasser II product page][hamation] — six contest
+  bands (160/80/40/20/15/10), +5–12 V per‑band rear‑panel control,
+  auto‑bypass with no input applied.
+- [TXBPF groups.io community][txbpf] — discussion / variants of the 5B4AGN
+  TX band‑pass filter. **Gated**: a free groups.io membership is required to
+  read the message archive and uploaded schematics.
+
+[fruugo]: https://www.fruugonorge.com/8-channel-esp8266-wireless-wifi-relay-module-esp-12f-development-board-dc-5v7-28v-e-welink-app-remo/p-350285115-763787021?language=en
+[tasmota]: https://templates.blakadder.com/ESP12F_Relay_X8.html
+[esphome]: https://devices.esphome.io/devices/esp-12f-relay-x8/
+[rothschopf]: https://werner.rothschopf.net/microcontroller/202108_esp8266_esp12f_relay_x8_en.htm
+[esp-hw]: https://www.espressif.com/sites/default/files/documentation/esp8266_hardware_design_guidelines_en.pdf
+[hamation]: https://www.hamation.com/Bandpasser.html
+[txbpf]: https://groups.io/g/TXBPF
