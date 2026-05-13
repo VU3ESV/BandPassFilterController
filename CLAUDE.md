@@ -79,7 +79,15 @@ factory‑reset procedure.
 ## Reference implementation
 
 `.support/ESP12TCPClientV6.ino` is the original sketch this project is derived
-from. It establishes the pin assignment for the 8‑relay ESP12 carrier board
-and the Kenwood `IF;` TCP polling pattern. Its band mapping bundles 30 m with
-40 m and 17 m with 20 m — that is **not** appropriate for a contest BPF, where
-WARC bands must be in bypass. The new firmware fixes this.
+from. It establishes the GPIO usage for the LC Technology `ESP12F_Relay_X8`
+8‑relay carrier and the Kenwood `IF;` TCP polling pattern. Two things the new
+firmware corrects:
+
+1. Its band mapping bundles 30 m with 40 m and 17 m with 20 m — wrong for a
+   contest BPF where WARC bands must route to bypass.
+2. Its `Relay1..Relay8` macros are numbered **reverse** of the board's
+   silkscreen (the reference's `Relay1 = GPIO5` is *Relay 8* on the PCB).
+   The new firmware uses the silkscreen labels and deliberately skips
+   Relays 1 (GPIO16) and 6 (GPIO0) because both pulse ON briefly at every
+   power‑up. See [docs/HARDWARE.md](docs/HARDWARE.md) for the full pin
+   table and sources.

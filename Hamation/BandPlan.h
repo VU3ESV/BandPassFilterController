@@ -48,12 +48,23 @@ inline Band bandFor(long hz) {
   return BAND_BYPASS;
 }
 
-constexpr uint8_t kPin160 =  5;  // Relay 1 → 160 m control pin
-constexpr uint8_t kPin80  =  4;  // Relay 2 → 80 m  control pin
-constexpr uint8_t kPin40  =  0;  // Relay 3 → 40 m  control pin
-constexpr uint8_t kPin20  = 15;  // Relay 4 → 20 m  control pin
-constexpr uint8_t kPin15  = 13;  // Relay 5 → 15 m  control pin
-constexpr uint8_t kPin10  = 12;  // Relay 6 → 10 m  control pin
+// LC Technology ESP12F_Relay_X8 board — silkscreen mapping is:
+//   Relay 1 = GPIO16  ← pulses ON at boot, INTENTIONALLY UNUSED
+//   Relay 2 = GPIO14
+//   Relay 3 = GPIO12
+//   Relay 4 = GPIO13
+//   Relay 5 = GPIO15  (board pull-down keeps it OFF at boot)
+//   Relay 6 = GPIO0   ← pulses ON at boot, INTENTIONALLY UNUSED
+//   Relay 7 = GPIO4
+//   Relay 8 = GPIO5
+// We deliberately skip Relays 1 and 6 so no contest band glitches at boot.
+// See ../docs/HARDWARE.md for sources and the boot-mode reasoning.
+constexpr uint8_t kPin160 = 14;  // Relay 2 → 160 m
+constexpr uint8_t kPin80  = 12;  // Relay 3 → 80 m
+constexpr uint8_t kPin40  = 13;  // Relay 4 → 40 m
+constexpr uint8_t kPin20  = 15;  // Relay 5 → 20 m
+constexpr uint8_t kPin15  =  4;  // Relay 7 → 15 m
+constexpr uint8_t kPin10  =  5;  // Relay 8 → 10 m
 
 inline void pinSetup() {
   pinMode(kPin160, OUTPUT);
