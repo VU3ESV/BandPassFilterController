@@ -1,0 +1,22 @@
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# Arduino IDE temp / cache
+.cache/
+.pio/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Local Claude state (do not leak)
+.claude/
+memory/
