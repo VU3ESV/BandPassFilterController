@@ -47,8 +47,9 @@ On power‑up the ESP8266 needs **GPIO0 HIGH** (to boot from flash) and
 to float HIGH for a few hundred milliseconds before the firmware initialises
 it. On this board:
 
-- GPIO16 → Relay 1: energises briefly at every reboot. Documented behaviour;
-  Tasmota notes it explicitly.
+- GPIO16 → Relay 1: energises briefly at every reboot. Confirmed by both
+  the [Tasmota template][tasmota] and Werner Rothschopf's
+  [write‑up][rothschopf].
 - GPIO0  → Relay 6: HIGH at boot is *required*, so Relay 6 is energised from
   power‑up until the firmware in `setup()` drives it LOW.
 
@@ -57,6 +58,18 @@ could feed an in‑transmit RF path into the wrong filter section. By
 assigning band lines to Relays **2, 3, 4, 5, 7, 8** only, none of the six
 contest bands glitches at boot. Relays 1 and 6 are left unused; their
 boot‑time pulses are harmless because nothing is wired to them.
+
+> **Conflicting source — verify on your unit.** Werner's write‑up also
+> claims **GPIO15 (Relay 5)** activates briefly at boot. The Tasmota
+> template does not. The ESP8266 datasheet requires GPIO15 to be LOW at
+> reset (the carrier provides a pull‑down), so a *pulse* would be
+> surprising. We currently route **20 m → Relay 5**. After the first
+> power‑up of your built board, **listen for which relays click during
+> boot**: if Relay 5 *does* click, swap 20 m off Relay 5 (e.g. retire 20 m
+> to Relay 5 → GPIO and accept the boot pulse, or change `kPin20` in
+> `BandPlan.h` to one of the spare GPIOs after retiring a less‑critical
+> band). This unit is the canonical test case for resolving the source
+> disagreement.
 
 ### Firmware ↔ band ↔ relay table
 
@@ -121,15 +134,55 @@ carrier so the relay contacts can switch the Hamation's +12 V rail.
 
 ## Programming the board
 
-The carrier brings out the ESP‑12F flash header. To flash:
+**The carrier has no on‑board USB jack.** Programming requires an external
+USB‑to‑TTL adapter (FTDI / CP2102 / genuine CH340 recommended) wired to a
+header on the PCB. See Werner Rothschopf's [board write‑up][rothschopf]
+for the canonical procedure.
 
-1. Hold the on‑board **PROG** button (or short GPIO0 to GND).
-2. Press / release **RESET**.
-3. Release **PROG**.
-4. Upload at 115200 baud, *Generic ESP8266 Module* (or *NodeMCU 1.0*).
+### Header pads brought out by the carrier
 
-Power the board from USB‑to‑serial during flashing; do not feed it from the
-high‑voltage input at the same time.
+`5 V`, `TXd (= ESP GPIO1)`, `RXd (= ESP GPIO3)`, `IO0 (= GPIO0)`, `GND`
+(multiple), plus `GPIO2` / `ADC` as diagnostics. Solder a pin‑header to
+these pads if your carrier doesn't already have one fitted.
+
+### Adapter wiring (TX/RX are crossed — common gotcha)
+
+| USB‑TTL adapter pin | Board header pad |
+| --- | --- |
+| TX | RXd (= GPIO3) |
+| RX | TXd (= GPIO1) |
+| GND | GND |
+| 5 V | 5 V (only if the adapter is your power source; do not double‑feed) |
+
+### Flash‑mode entry (per Werner)
+
+1. **Tie IO0 to GND** (jumper, or hold an IO0 push‑button if you've fitted
+   one).
+2. **Press RESET** on the board (or briefly short EN/CH_PD to GND if no
+   button).
+3. **Start the upload** in the Arduino IDE / arduino‑cli / esptool.
+4. After the upload completes, **remove the IO0‑to‑GND jumper and reset
+   the board** so it boots normally.
+
+### macOS adapter caveats (verified 2026‑05)
+
+- macOS termios is unusually strict; cheap USB‑serial clones that work on
+  Linux can fail with `termios EINVAL` on `_set_port_baudrate` /
+  `_port.open(force_update=True)`. If you see that error, the adapter is
+  the problem, not esptool or the board. Switch to a known‑good FTDI cable
+  before retrying.
+- 74880 baud (the ESP8266 ROM bootloader's boot‑log rate) is not supported
+  by every macOS USB‑serial driver. esptool uses 115200 by default; leave
+  it there unless an FTDI cable is in use.
+
+### Arduino IDE / arduino‑cli board profile
+
+Werner uses *NodeMCU 0.9*. *Generic ESP8266 Module* with
+`eesz=4M1M,baud=115200` (the FQBN this repo expects) is equivalent and
+gives finer control over the flash partitioning.
+
+Power the board from the USB‑TTL adapter's 5 V output during flashing, OR
+from the screw‑terminal input — never both at once.
 
 ## Optional additions
 
@@ -143,9 +196,12 @@ high‑voltage input at the same time.
 
 ## Quick sanity check before applying RF
 
-1. Power the board with USB only (no RF connected).
-2. Watch the relay LEDs through `setup()`. Relays 1 and 6 may flash; Relays
-   2/3/4/5/7/8 must stay **OFF**.
+1. Power the board from the USB‑TTL adapter (or 5 V screw terminal) only —
+   no RF connected, no filter wired.
+2. Watch the relay LEDs through `setup()`. **Relays 1 and 6 will flash
+   briefly** (boot strap). The six band relays (2/3/4/5/7/8) must stay
+   **OFF**. If Relay 5 *also* clicks, that's the GPIO15 boot‑pulse Werner
+   warned about — see the caveat box under "Why we skip Relay 1 and 6".
 3. Once the firmware is up, tune the radio to 160 m → Relay 2 should
    energise on its own. Step through each band and verify the matching relay
    activates. Tune to a WARC band → all relays must drop.
