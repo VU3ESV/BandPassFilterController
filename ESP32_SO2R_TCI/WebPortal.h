@@ -137,8 +137,15 @@ private:
     h += F("<fieldset><legend>WiFi</legend>");
     h += F("<label>SSID</label><input name='ssid' maxlength='31' value='");
     h += esc(cfg_->wifi_ssid); h += F("'>");
-    h += F("<label>Password</label><input name='pass' type='password' maxlength='63' value='");
-    h += esc(cfg_->wifi_pass); h += F("'>");
+    // Wi-Fi password is intentionally NOT rendered back into the form.
+    // type='password' only masks the on-screen characters — anyone with
+    // View Source / DevTools would see the value attribute in plaintext.
+    // Standard pattern (OpenWrt LuCI, Tasmota, etc.): show an empty field
+    // with a "leave blank to keep current" hint, and the save handler
+    // skips overwriting wifi_pass when the input arrives empty.
+    h += F("<label>Password</label>"
+           "<input name='pass' type='password' maxlength='63' value=''"
+           " autocomplete='new-password' placeholder='leave blank to keep current'>");
     h += F("<label>Hostname (mDNS)</label><input name='hostname' maxlength='31' value='");
     h += esc(cfg_->hostname); h += F("'>");
     h += F("</fieldset>");
@@ -212,7 +219,18 @@ private:
 
   void handleSave() {
     copyArg("ssid",     cfg_->wifi_ssid, sizeof(cfg_->wifi_ssid));
-    copyArg("pass",     cfg_->wifi_pass, sizeof(cfg_->wifi_pass));
+    // Wi-Fi password: the form renders an empty field by design; an
+    // empty submitted value means "keep the existing password", so we
+    // only overwrite when the user actually typed something. Mirrors
+    // the "leave blank to keep current" pattern used by OpenWrt /
+    // Tasmota / most home-router admin pages.
+    if (server_.hasArg("pass")) {
+      String v = server_.arg("pass");
+      if (v.length() > 0) {
+        strncpy(cfg_->wifi_pass, v.c_str(), sizeof(cfg_->wifi_pass) - 1);
+        cfg_->wifi_pass[sizeof(cfg_->wifi_pass) - 1] = '\0';
+      }
+    }
     copyArg("hostname", cfg_->hostname,  sizeof(cfg_->hostname));
     readRadioArgs("r1_host", "r1_port", "r1_iaru",
                   cfg_->radio1_host, sizeof(cfg_->radio1_host),
