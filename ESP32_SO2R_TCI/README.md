@@ -68,7 +68,8 @@ Band   BCD (DCBA)  decimal
 10  m  1001        9
 6   m  1010        10
 
-60 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
+60 m / OOB / disconnect / tune:  emits a nearest-WARC code (4, 6, or 8)
+                                  to force the BPF into bypass — see below.
 ```
 
 Note: the 5B4AGN TXBPF and Hamation BandPasser II only have internal
@@ -76,6 +77,27 @@ sections for the six contest bands (160/80/40/20/15/10 m). On
 30/17/12/6 m the standard code is still emitted on the BCD bus, but
 the BPF itself will bypass — its own decode table only recognises the
 six contest codes.
+
+#### Bypass uses a WARC code, not 0000
+
+The Hamation BandPasser II decodes BCD `0000` as **160 m** — exactly
+the opposite of bypass, and dangerous when the radio is mid-tune at
+high power on a different band. To work around this, the firmware
+never emits `0000` for bypass states. Instead, it picks the WARC band
+code nearest the radio's last known frequency:
+
+| Last known freq | Bypass code emitted |
+| --- | --- |
+| < 14 MHz (160/80/40 m)   | `0100` = 30 m (4) |
+| 14–21 MHz (20 m)         | `0110` = 17 m (6) |
+| > 21 MHz (15/10/6 m)     | `1000` = 12 m (8) |
+| Unknown (link down/boot) | `0100` = 30 m (4) |
+
+Hamation has no internal 30/17/12 m sections, so seeing a WARC code
+trips its built-in bypass relay. 5B4AGN behaves the same way (no
+matching contest section ⇒ all section relays released ⇒ bypass), so
+this single policy is safe on both filters. Bypass states covered:
+TUNE pressed, OOB, 60 m, TCI link down, WiFi down.
 
 ## Dependencies
 

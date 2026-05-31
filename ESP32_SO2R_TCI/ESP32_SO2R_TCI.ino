@@ -119,11 +119,17 @@ String statusJson() {
 // =============================================================================
 
 void applyBand(int radioIndex, long hz) {
-  // While TUNE is engaged on this radio, override the decoded band with
-  // a forced bypass (code 0). bcdFor() is still consulted so that when
-  // tune releases, the next applyBand() call lands on the live band.
+  // Decoded band, then bypass override. We never emit 0000 for bypass:
+  // the Hamation BandPasser II decodes 0000 as 160 m (engaging the
+  // 160 m section instead of bypass), which is dangerous if the radio
+  // is tuning at high power on a different band. Instead, when bypass
+  // is needed (TUNE pressed, OOB, link down, 60 m) we emit a nearest-
+  // WARC code — Hamation has no WARC sections so it falls through to
+  // its built-in bypass relay; 5B4AGN also bypasses on unrecognised
+  // codes.
   bool tuning = (radioIndex == 0) ? g_tune1 : g_tune2;
-  BcdResult r = tuning ? BcdResult{0, true} : bcdFor(hz);
+  BcdResult r = bcdFor(hz);
+  if (tuning || r.inhibit) r = nearestWarcBypass(hz);
   if (radioIndex == 0) {
     if (r.code == g_lastBand1 && r.inhibit == g_lastInh1) return;
     driveBank(kBank1, r);

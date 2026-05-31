@@ -43,6 +43,26 @@ struct BcdResult {
   bool    inhibit;  // true = assert inhibit (BPF should bypass).
 };
 
+// Pick a "nearest WARC" BCD code for bypass states (tune-up, OOB,
+// 60 m, link-down). Why not just emit 0000? The Hamation BandPasser II
+// reads 0000 as "160 m" via its internal decoder — exactly the
+// opposite of bypass, and dangerous when the radio is mid-tune at
+// high power on a different band. Hamation has its own built-in
+// bypass relay that engages when the decoder sees a band the filter
+// has no section for; a WARC code triggers it. The 5B4AGN behaves
+// identically: with no matching contest section, the bank simply
+// stays de-energised (= bypass).
+//
+// The "nearest" choice is cosmetic — any WARC code triggers Hamation's
+// bypass — but picking a band adjacent to the radio's last freq keeps
+// the BCD bus visually sensible if you scope it during tune.
+inline BcdResult nearestWarcBypass(long hz) {
+  if (hz <= 0)            return {4, true};  // unknown freq -> 30 m
+  if (hz < 14000000L)     return {4, true};  // 160/80/40 m -> 30 m
+  if (hz < 21000000L)     return {6, true};  // 20 m        -> 17 m
+  return {8, true};                            // 15/10/6 m   -> 12 m
+}
+
 // Hz units. 60 m and out-of-band → inhibit=true, code=0 (bypass).
 inline BcdResult bcdFor(long hz) {
   if (hz >= 1800000L  && hz <= 2000000L)  return { 1,  false };  // 160 m
