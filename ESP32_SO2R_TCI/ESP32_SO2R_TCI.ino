@@ -389,7 +389,8 @@ void setup() {
   if (bpf::g_cfg.wifi_ssid[0] != '\0') bpf::startStaMode();
   else                                  bpf::startApMode();
 
-  bpf::g_web.begin(bpf::g_cfg, bpf::statusJson);
+  bpf::g_web.begin(bpf::g_cfg, bpf::statusJson,
+                   [](int bpfIdx, bool on) { bpf::onTuneChange(bpfIdx, on); });
 }
 
 void loop() {
@@ -421,7 +422,11 @@ void loop() {
     }
   }
 
-  // Serial console: "reset" wipes config; "status" prints status JSON.
+  // Serial console:
+  //   reset                wipes EEPROM and reboots
+  //   status               prints status JSON
+  //   bypass{1,2} {on,off} latches manual bypass on the named BPF
+  //                        (same effect as TCI tune; for AetherSDR etc.)
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     line.trim();
@@ -432,7 +437,10 @@ void loop() {
       ESP.restart();
     } else if (line == "status") {
       Serial.println(bpf::statusJson());
-    }
+    } else if (line == "bypass1 on")  { bpf::onTuneChange(0, true);  }
+      else if (line == "bypass1 off") { bpf::onTuneChange(0, false); }
+      else if (line == "bypass2 on")  { bpf::onTuneChange(1, true);  }
+      else if (line == "bypass2 off") { bpf::onTuneChange(1, false); }
   }
 
   delay(10);  // yield to WiFi / TCI tasks

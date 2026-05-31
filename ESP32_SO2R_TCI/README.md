@@ -151,8 +151,28 @@ Routes:
 | `/` | GET | HTML form |
 | `/save` | POST | URL‑encoded form, writes EEPROM, returns "Saved" |
 | `/status` | GET | JSON: filter / mode / WiFi / R1 + R2 connected + last band / uptime |
+| `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force-bypass for radios that don't emit TCI tune events (see below). |
 | `/reboot` | POST | Soft reboot |
 | `/factory_reset` | POST | Zero EEPROM (requires `confirm=YES`) |
+
+#### Manual bypass for non-tune-emitting radios
+
+Some TCI servers (AetherSDR, partial-protocol implementations) don't
+forward the radio's TUNE state, so the firmware can't auto-bypass
+during an ATU tune cycle on those rigs. For that case there are two
+manual paths that latch the same internal flag the TCI tune handler
+uses — the LCD state column shows `TU` and the bank emits the WARC
+bypass code while engaged:
+
+- **Web portal**: click `BPF 1 bypass ON` (or `BPF 2 ...`) before
+  pressing TUNE on the radio, `... OFF` after the ATU finishes.
+  Buttons live in the `Manual bypass` section of the root page.
+- **Serial console** (115200): `bypass1 on` / `bypass1 off`,
+  `bypass2 on` / `bypass2 off`. Easy to script from a shack PC tune
+  macro via the USB serial port.
+
+Both call the same handler. If you forget to release, the LCD's `TU`
+indicator makes it obvious.
 
 Config is persisted to flash (EEPROM emulation, 384‑byte page with
 magic `0xBF50C0DE`, version 2, CRC32‑checksummed). On magic / version

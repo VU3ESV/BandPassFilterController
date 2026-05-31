@@ -17,13 +17,20 @@ namespace bpf {
 class WebPortal {
 public:
   using StatusFn = std::function<String()>;
+  // Manual bypass hook: callback(bpfIdx=0|1, on=true|false). Wired to
+  // onTuneChange() in the sketch so the LCD/state pipeline reuses the
+  // existing tune codepath. Used for radios whose TCI server doesn't
+  // emit tune events (e.g. AetherSDR).
+  using BypassFn = std::function<void(int, bool)>;
 
-  void begin(Config& cfg, StatusFn statusJson) {
+  void begin(Config& cfg, StatusFn statusJson, BypassFn bypassFn) {
     cfg_ = &cfg;
     statusJson_ = statusJson;
+    bypassFn_   = bypassFn;
     server_.on("/",              HTTP_GET,  [this]() { handleRoot(); });
     server_.on("/save",          HTTP_POST, [this]() { handleSave(); });
     server_.on("/status",        HTTP_GET,  [this]() { handleStatus(); });
+    server_.on("/bypass",        HTTP_POST, [this]() { handleBypass(); });
     server_.on("/reboot",        HTTP_POST, [this]() { handleReboot(); });
     server_.on("/factory_reset", HTTP_POST, [this]() { handleFactoryReset(); });
     server_.onNotFound([this]() { server_.send(404, "text/plain", "not found"); });
@@ -36,6 +43,7 @@ private:
   WebServer server_{80};
   Config*   cfg_ = nullptr;
   StatusFn  statusJson_;
+  BypassFn  bypassFn_;
 
   static String esc(const char* s) {
     String o;
@@ -124,6 +132,33 @@ private:
            "routes RX-1 to BPF 1 and RX-2 to BPF 2.</p>");
 
     h += F("<button type='submit'>Save</button></form>");
+    h += F("<hr><fieldset><legend>Manual bypass</legend>"
+           "<p style='font-size:.85em;color:#555'>For radios whose TCI "
+           "server doesn't emit tune events (e.g. AetherSDR). Click ON "
+           "before pressing TUNE on the radio, OFF after the ATU "
+           "finishes. While ON, the affected BPF is forced to bypass "
+           "and the LCD state column shows TU.</p>"
+           "<div class='row'>"
+           "<form method='POST' action='/bypass'>"
+           "<input type='hidden' name='bpf' value='1'>"
+           "<input type='hidden' name='on'  value='1'>"
+           "<button type='submit'>BPF 1 bypass ON</button></form>"
+           "<form method='POST' action='/bypass'>"
+           "<input type='hidden' name='bpf' value='1'>"
+           "<input type='hidden' name='on'  value='0'>"
+           "<button type='submit'>BPF 1 bypass OFF</button></form>"
+           "</div>"
+           "<div class='row'>"
+           "<form method='POST' action='/bypass'>"
+           "<input type='hidden' name='bpf' value='2'>"
+           "<input type='hidden' name='on'  value='1'>"
+           "<button type='submit'>BPF 2 bypass ON</button></form>"
+           "<form method='POST' action='/bypass'>"
+           "<input type='hidden' name='bpf' value='2'>"
+           "<input type='hidden' name='on'  value='0'>"
+           "<button type='submit'>BPF 2 bypass OFF</button></form>"
+           "</div>"
+           "</fieldset>");
     h += F("<hr><form method='POST' action='/reboot' style='display:inline'>"
            "<button>Reboot</button></form> "
            "<form method='POST' action='/factory_reset' style='display:inline' "
@@ -169,6 +204,25 @@ private:
 
   void handleStatus() {
     server_.send(200, "application/json", statusJson_ ? statusJson_() : String("{}"));
+  }
+
+  void handleBypass() {
+    if (!bypassFn_) { server_.send(503, "text/plain", "no bypass handler"); return; }
+    if (!server_.hasArg("bpf") || !server_.hasArg("on")) {
+      server_.send(400, "text/plain", "need bpf=1|2 and on=0|1");
+      return;
+    }
+    long bpf = server_.arg("bpf").toInt();
+    String onStr = server_.arg("on");
+    bool   on    = (onStr == "1" || onStr == "true" || onStr == "on");
+    if (bpf < 1 || bpf > 2) {
+      server_.send(400, "text/plain", "bpf must be 1 or 2");
+      return;
+    }
+    bypassFn_((int)(bpf - 1), on);
+    String body = "BPF "; body += String(bpf);
+    body += on ? " bypass ON\n" : " bypass OFF\n";
+    server_.send(200, "text/plain", body);
   }
 
   void handleReboot() {
