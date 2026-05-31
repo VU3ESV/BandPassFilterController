@@ -150,6 +150,8 @@ void applyBand(int radioIndex, long hz) {
 // Tune state change: latch the new flag, re-evaluate the BCD bank
 // using the last known frequency, and update the LCD's state column.
 void onTuneChange(int radioIndex, bool tuning) {
+  Serial.printf("[BPF%d] TUNE change -> %s\n",
+                radioIndex + 1, tuning ? "ON  (forcing bypass)" : "OFF");
   if (radioIndex == 0) g_tune1 = tuning;
   else                 g_tune2 = tuning;
   long hz = (radioIndex == 0) ? g_lastFreq1 : g_lastFreq2;
@@ -198,9 +200,11 @@ void onSharedTrx(const int senderRig) {
 }
 
 void onSharedTune(const int senderRig) {
+  bool t = g_radio1.rtx[senderRig].getTune();
+  Serial.printf("[tci-shared] tune evt rig=%d state=%d\n", senderRig, t);
   int idx = sharedBpfIndex(senderRig);
   if (idx < 0) return;
-  onTuneChange(idx, g_radio1.rtx[senderRig].getTune());
+  onTuneChange(idx, t);
 }
 
 void onRadio1Vfo(const int senderRig, const int senderVfo) {
@@ -236,12 +240,16 @@ void onRadio2Trx(const int senderRig) {
 }
 
 void onRadio1Tune(const int senderRig) {
+  bool t = g_radio1.rtx[senderRig].getTune();
+  Serial.printf("[R1] tune evt rig=%d state=%d\n", senderRig, t);
   if (senderRig != 0) return;
-  onTuneChange(0, g_radio1.rtx[senderRig].getTune());
+  onTuneChange(0, t);
 }
 void onRadio2Tune(const int senderRig) {
+  bool t = g_radio2.rtx[senderRig].getTune();
+  Serial.printf("[R2] tune evt rig=%d state=%d\n", senderRig, t);
   if (senderRig != 0) return;
-  onTuneChange(1, g_radio2.rtx[senderRig].getTune());
+  onTuneChange(1, t);
 }
 
 void onRadio1Connected() { Serial.println("[R1] TCI conn event"); }
