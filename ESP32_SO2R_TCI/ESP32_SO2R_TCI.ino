@@ -440,7 +440,23 @@ void startStaMode() {
     Serial.printf("[wifi] STA up, ip=%s\r\n", WiFi.localIP().toString().c_str());
     if (MDNS.begin(g_cfg.hostname)) {
       MDNS.addService("http", "tcp", 80);
-      Serial.printf("[mdns] http://%s.local/\r\n", g_cfg.hostname);
+      // Custom discovery service. Clients browse `_bpf-so2r._tcp.local.`
+      // to enumerate every BPF controller on the LAN without knowing
+      // hostnames in advance. TXT records carry just enough metadata
+      // for a UI to identify the device (don't put state in TXT — that
+      // changes too fast and the cache would be wrong; for state, the
+      // discovered URL points at /discover and /status).
+      MDNS.addService("bpf-so2r", "tcp", 80);
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "vendor",  "VU3ESV");
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "product", "BandPassFilterController");
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "version", kFirmwareVersion);
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "build",   kFirmwareBuild);
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "host",    (const char*)g_cfg.hostname);
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "bpf",     "2");
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "path",    "/discover");
+      MDNS.addServiceTxt("bpf-so2r", "tcp", "ws_live", "81");
+      Serial.printf("[mdns] http://%s.local/  (service _bpf-so2r._tcp on :80)\r\n",
+                    g_cfg.hostname);
     }
     setupOta();
     g_wsServer.begin();

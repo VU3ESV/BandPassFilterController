@@ -151,10 +151,79 @@ Routes:
 | --- | --- | --- |
 | `/` | GET | HTML form |
 | `/save` | POST | URL‑encoded form, writes EEPROM, returns "Saved" |
-| `/status` | GET | JSON: filter / mode / WiFi / R1 + R2 connected + last band / uptime |
+| `/status` | GET | JSON: filter / mode / WiFi / R1 + R2 connected + last band / sensors / history / uptime |
+| `/config` | GET | JSON: stored configuration (Wi-Fi password omitted) with `Content-Disposition` set so the browser saves as `bpf-so2r-config-<host>.json` |
+| `/discover` | GET | JSON: device identity, vendor, product, version, IP, ports, endpoint paths. See [Discovery](#discovery) below. |
+| `/history` | POST | `clear=YES` → wipe the band-change ring buffer in RAM, returns `cleared N events`. |
+| `/live` | GET | Dark-themed standalone page that connects to the live WebSocket on port 81 and renders an LCD-style view of both radios. |
 | `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force-bypass for radios that don't emit TCI tune events (see below). |
 | `/reboot` | POST | Soft reboot |
 | `/factory_reset` | POST | Zero EEPROM (requires `confirm=YES`) |
+
+### Discovery
+
+Two complementary mechanisms — pick whichever the client environment
+makes easier:
+
+- **mDNS service browse.** The firmware advertises a custom service
+  type `_bpf-so2r._tcp.local.` on port 80 alongside the standard
+  `_http._tcp` registration. Any zeroconf-aware client can enumerate
+  every controller on the LAN without knowing hostnames in advance.
+  TXT records carry identification metadata (not live state):
+
+  | TXT key | Example |
+  | --- | --- |
+  | `vendor`  | `VU3ESV` |
+  | `product` | `BandPassFilterController` |
+  | `version` | `0.5.0` |
+  | `build`   | `Jan  1 2026 12:34:56` |
+  | `host`    | `SO2R-BPF` |
+  | `bpf`     | `2` |
+  | `path`    | `/discover` |
+  | `ws_live` | `81` |
+
+  Quick browse from the command line:
+
+  ```bash
+  # macOS
+  dns-sd -B _bpf-so2r._tcp local.
+  dns-sd -L SO2R-BPF _bpf-so2r._tcp local.   # detail one entry
+  # Linux
+  avahi-browse -r _bpf-so2r._tcp
+  ```
+
+  From code: Apple Bonjour, Java JmDNS, Python `zeroconf`, Go
+  `mdns`, etc. all browse this service type the same way.
+
+- **`GET /discover` (HTTP).** Once a client has an IP (from mDNS,
+  DHCP-leases page, manual entry, etc.) it can hit `/discover` for a
+  small machine-readable JSON identity record. Useful when the
+  client environment can't do mDNS (corporate network, headless
+  container without Avahi) or as a confirmation step after browse.
+
+  ```json
+  {
+    "service": "bpf-so2r",
+    "vendor":  "VU3ESV",
+    "product": "BandPassFilterController",
+    "version": "0.5.0",
+    "build":   "Jan  1 2026 12:34:56",
+    "hostname": "SO2R-BPF",
+    "ip":       "192.168.86.39",
+    "bpf_count": 2,
+    "ports": { "http": 80, "ws_live": 81, "ota": 3232 },
+    "endpoints": {
+      "portal": "/", "status": "/status", "config": "/config",
+      "discover": "/discover", "live": "/live", "bypass": "/bypass",
+      "history_clear": "/history?clear=YES"
+    }
+  }
+  ```
+
+  No live state — for that the client should then call `/status` (or
+  open the live WebSocket on the advertised `ws_live` port). Keeping
+  `/discover` static and small means clients can sweep many devices
+  cheaply.
 
 #### Manual bypass for non-tune-emitting radios
 

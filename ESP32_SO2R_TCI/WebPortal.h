@@ -39,6 +39,7 @@ public:
     server_.on("/save",          HTTP_POST, [this]() { handleSave(); });
     server_.on("/status",        HTTP_GET,  [this]() { handleStatus(); });
     server_.on("/config",        HTTP_GET,  [this]() { handleConfig(); });
+    server_.on("/discover",      HTTP_GET,  [this]() { handleDiscover(); });
     server_.on("/history",       HTTP_POST, [this]() { handleHistoryClear(); });
     server_.on("/live",          HTTP_GET,  [this]() { handleLivePage(); });
     server_.on("/bypass",        HTTP_POST, [this]() { handleBypass(); });
@@ -332,6 +333,37 @@ private:
     String fname = String("bpf-so2r-config-") + cfg_->hostname + ".json";
     server_.sendHeader("Content-Disposition",
                        String("attachment; filename=\"") + fname + "\"");
+    server_.send(200, "application/json", j);
+  }
+
+  // GET /discover — small, fast, cache-friendly metadata response a
+  // client can use to confirm the device's identity after finding it
+  // via mDNS (or to interrogate a device when it was reached by IP
+  // / hostname directly). Returns the same vendor / product / version
+  // pair carried in the _bpf-so2r._tcp TXT records, plus the URL paths
+  // a client needs to reach the rest of the API. Deliberately small
+  // (no live state) so a discovery sweep across many devices is cheap.
+  void handleDiscover() {
+    String j;
+    j.reserve(360);
+    j += F("{\"service\":\"bpf-so2r\","
+           "\"vendor\":\"VU3ESV\","
+           "\"product\":\"BandPassFilterController\",");
+    j += F("\"version\":\""); j += jsonEsc(version_); j += F("\",");
+    j += F("\"build\":\"");   j += jsonEsc(build_);   j += F("\",");
+    j += F("\"hostname\":\""); j += jsonEsc(cfg_->hostname); j += F("\",");
+    j += F("\"ip\":\"");      j += WiFi.localIP().toString(); j += F("\",");
+    j += F("\"bpf_count\":2,");
+    j += F("\"ports\":{\"http\":80,\"ws_live\":81,\"ota\":3232},");
+    j += F("\"endpoints\":{"
+           "\"portal\":\"/\","
+           "\"status\":\"/status\","
+           "\"config\":\"/config\","
+           "\"discover\":\"/discover\","
+           "\"live\":\"/live\","
+           "\"bypass\":\"/bypass\","
+           "\"history_clear\":\"/history?clear=YES\""
+           "}}");
     server_.send(200, "application/json", j);
   }
 
