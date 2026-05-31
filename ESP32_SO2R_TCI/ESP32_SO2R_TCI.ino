@@ -268,9 +268,22 @@ void startTciClients() {
                 g_cfg.radio2_host, g_cfg.radio2_port, g_cfg.radio2_iaru);
 }
 
+// Re-apply the configured hostname when the STA interface starts.
+// Calling WiFi.setHostname() right after WiFi.mode(WIFI_STA) races with
+// the netif being created; many routers end up logging the default
+// `esp32-<mac>` because DHCP DISCOVER goes out before the new hostname
+// reaches lwIP. Doing it from STA_START is documented as the reliable
+// pattern on espressif/arduino-esp32.
+void onWifiStaStart(arduino_event_id_t event) {
+  if (event == ARDUINO_EVENT_WIFI_STA_START) {
+    WiFi.setHostname(g_cfg.hostname);
+  }
+}
+
 void startStaMode() {
+  WiFi.onEvent(onWifiStaStart, ARDUINO_EVENT_WIFI_STA_START);
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(g_cfg.hostname);
+  WiFi.setHostname(g_cfg.hostname);   // first attempt; STA_START handler retries
   WiFi.begin(g_cfg.wifi_ssid, g_cfg.wifi_pass);
   Serial.printf("[wifi] STA connecting to '%s'", g_cfg.wifi_ssid);
   uint32_t deadline = millis() + 20000;
