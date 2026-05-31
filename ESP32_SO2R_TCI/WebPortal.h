@@ -22,16 +22,25 @@ public:
   // onTuneChange() in the sketch so the LCD/state pipeline reuses the
   // existing tune codepath. Used for radios whose TCI server doesn't
   // emit tune events (e.g. AetherSDR).
-  using BypassFn = std::function<void(int, bool)>;
+  using BypassFn       = std::function<void(int, bool)>;
+  // Clears the band-change ring buffer; returns the previous count.
+  using ClearHistoryFn = std::function<size_t()>;
 
-  void begin(Config& cfg, StatusFn statusJson, BypassFn bypassFn) {
+  void begin(Config& cfg, StatusFn statusJson, BypassFn bypassFn,
+             ClearHistoryFn clearHistoryFn,
+             const char* version, const char* build) {
     cfg_ = &cfg;
-    statusJson_ = statusJson;
-    bypassFn_   = bypassFn;
+    statusJson_     = statusJson;
+    bypassFn_       = bypassFn;
+    clearHistoryFn_ = clearHistoryFn;
+    version_        = version;
+    build_          = build;
     server_.on("/",              HTTP_GET,  [this]() { handleRoot(); });
     server_.on("/save",          HTTP_POST, [this]() { handleSave(); });
     server_.on("/status",        HTTP_GET,  [this]() { handleStatus(); });
     server_.on("/config",        HTTP_GET,  [this]() { handleConfig(); });
+    server_.on("/history",       HTTP_POST, [this]() { handleHistoryClear(); });
+    server_.on("/live",          HTTP_GET,  [this]() { handleLivePage(); });
     server_.on("/bypass",        HTTP_POST, [this]() { handleBypass(); });
     server_.on("/reboot",        HTTP_POST, [this]() { handleReboot(); });
     server_.on("/factory_reset", HTTP_POST, [this]() { handleFactoryReset(); });
@@ -42,10 +51,13 @@ public:
   void tick() { server_.handleClient(); }
 
 private:
-  WebServer server_{80};
-  Config*   cfg_ = nullptr;
-  StatusFn  statusJson_;
-  BypassFn  bypassFn_;
+  WebServer       server_{80};
+  Config*         cfg_ = nullptr;
+  StatusFn        statusJson_;
+  BypassFn        bypassFn_;
+  ClearHistoryFn  clearHistoryFn_;
+  const char*     version_ = "?";
+  const char*     build_   = "?";
 
   static String esc(const char* s) {
     String o;
@@ -131,7 +143,12 @@ private:
            "legend{padding:0 .4em;color:#444;font-weight:bold}"
            "</style></head><body>");
     h += F("<h1>BPF SO2R / TCI Controller</h1>");
-    h += F("<p>Host: <code>"); h += esc(cfg_->hostname); h += F("</code></p>");
+    h += F("<p style='font-size:.85em;color:#555'>Host: <code>");
+    h += esc(cfg_->hostname);
+    h += F("</code> &middot; firmware <code>v");
+    h += esc(version_); h += F("</code> built <code>");
+    h += esc(build_);
+    h += F("</code> &middot; <a href='/live'>live status</a></p>");
     h += F("<form method='POST' action='/save'>");
 
     h += F("<fieldset><legend>WiFi</legend>");
@@ -191,6 +208,26 @@ private:
            "<button type='submit'>BPF 2 bypass OFF</button></form>"
            "</div>"
            "</fieldset>");
+    // Backup / restore. Backup is a direct download of /config (the
+    // existing JSON endpoint, no Wi-Fi password in the payload).
+    // Restore is JS-side: we read the JSON file, lift its values into
+    // the existing /save form, and submit — no new server endpoint or
+    // JSON parser on the firmware.
+    h += F("<fieldset><legend>Backup / restore</legend>"
+           "<p style='font-size:.85em;color:#555'>Backup downloads the "
+           "current config (Wi-Fi password is intentionally excluded). "
+           "Restore reads that file back into the form above — review, "
+           "then click <em>Save</em> to commit.</p>"
+           "<div class='row'>"
+           "<form method='GET' action='/config' style='margin:0'>"
+           "<button type='submit' formtarget='_blank'>Download config</button></form>"
+           "<label style='margin:0;display:block'><span class='btn-like' "
+           "style='display:inline-block;padding:.6em 1.1em;border:1px solid #888;"
+           "border-radius:4px;cursor:pointer'>Restore from file…</span>"
+           "<input type='file' id='restoreFile' accept='.json,application/json' "
+           "style='display:none'></label>"
+           "</div></fieldset>");
+
     h += F("<hr><form method='POST' action='/reboot' style='display:inline'>"
            "<button>Reboot</button></form> "
            "<form method='POST' action='/factory_reset' style='display:inline' "
@@ -198,7 +235,27 @@ private:
            "<input type='hidden' name='confirm' value='YES'>"
            "<button class='warn'>Factory reset</button></form>"
            "<p><a href='/status'>/status JSON</a> &middot; "
-           "<a href='/config'>/config JSON</a></p></body></html>");
+           "<a href='/config'>/config JSON</a> &middot; "
+           "<a href='/live'>live status</a></p>");
+
+    // Restore JS: file → JSON → form fields. Doesn't touch wifi_pass.
+    h += F("<script>(function(){"
+           "var i=document.getElementById('restoreFile');"
+           "i.addEventListener('change',function(e){"
+           "var f=e.target.files[0];if(!f)return;"
+           "var r=new FileReader();"
+           "r.onload=function(ev){try{"
+           "var c=JSON.parse(ev.target.result);"
+           "function set(n,v){var el=document.querySelector('[name=\\''+n+'\\']');"
+           "if(el&&v!==undefined&&v!==null)el.value=v;}"
+           "set('ssid',c.ssid);set('hostname',c.hostname);"
+           "if(c.r1){set('r1_host',c.r1.host);set('r1_port',c.r1.port);set('r1_iaru',c.r1.iaru);}"
+           "if(c.r2){set('r2_host',c.r2.host);set('r2_port',c.r2.port);set('r2_iaru',c.r2.iaru);}"
+           "alert('Loaded '+f.name+' into the form. Review and click Save to commit.');"
+           "}catch(err){alert('Could not parse '+f.name+': '+err);}};"
+           "r.readAsText(f);});})();</script>");
+
+    h += F("</body></html>");
     server_.send(200, "text/html", h);
   }
 
@@ -258,9 +315,10 @@ private:
   // means it should not round-trip the secret over the LAN.
   void handleConfig() {
     String j;
-    j.reserve(360);
-    j += F("{\"ssid\":\"");        j += jsonEsc(cfg_->wifi_ssid);
+    j.reserve(420);
+    j += F("{\"version\":\"");     j += jsonEsc(version_);
     j += F("\",\"hostname\":\"");  j += jsonEsc(cfg_->hostname);
+    j += F("\",\"ssid\":\"");      j += jsonEsc(cfg_->wifi_ssid);
     j += F("\",\"r1\":{\"host\":\""); j += jsonEsc(cfg_->radio1_host);
     j += F("\",\"port\":");        j += String(cfg_->radio1_port);
     j += F(",\"iaru\":");          j += String(cfg_->radio1_iaru);
@@ -268,7 +326,83 @@ private:
     j += F("\",\"port\":");        j += String(cfg_->radio2_port);
     j += F(",\"iaru\":");          j += String(cfg_->radio2_iaru);
     j += F("}}");
+    // Suggest a sensible filename for the "Download config" button.
+    // Browsers issuing /config from XHR / fetch will ignore this; only
+    // top-level GET (the download button) honours Content-Disposition.
+    String fname = String("bpf-so2r-config-") + cfg_->hostname + ".json";
+    server_.sendHeader("Content-Disposition",
+                       String("attachment; filename=\"") + fname + "\"");
     server_.send(200, "application/json", j);
+  }
+
+  // POST /history?clear=YES — clears the band-change ring buffer in
+  // RAM. Confirmation is required so a stray POST can't wipe the log.
+  void handleHistoryClear() {
+    if (!clearHistoryFn_) { server_.send(503, "text/plain", "no handler"); return; }
+    if (server_.arg("clear") != "YES") {
+      server_.send(400, "text/plain", "clear=YES required");
+      return;
+    }
+    size_t prev = clearHistoryFn_();
+    String body = "cleared "; body += String(prev); body += " events\n";
+    server_.send(200, "text/plain", body);
+  }
+
+  // GET /live — small standalone page that connects to the WebSocket
+  // status feed on port 81 and renders an LCD-style live view. Pure
+  // client side; the page itself is static and the feed does the work.
+  void handleLivePage() {
+    String h;
+    h.reserve(2600);
+    h += F("<!doctype html><html><head><meta charset='utf-8'>"
+           "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+           "<title>BPF SO2R live</title><style>"
+           "body{font-family:sans-serif;max-width:560px;margin:1em auto;padding:0 1em;background:#111;color:#eee}"
+           "a{color:#9cf}"
+           "h1{font-size:1.1em;color:#9cf}"
+           ".lcd{background:#021;color:#7f7;font-family:monospace;font-size:1.4em;"
+           "padding:.8em 1em;border-radius:6px;letter-spacing:.05em;white-space:pre;line-height:1.4}"
+           ".meta{font-size:.85em;color:#888;margin:.6em 0}"
+           ".pill{display:inline-block;padding:.1em .6em;border-radius:10px;font-size:.8em}"
+           ".up{background:#063;color:#cfc}.down{background:#600;color:#fcc}"
+           ".tu{background:#660;color:#ffc}"
+           "table{width:100%;border-collapse:collapse;margin-top:.5em;font-size:.9em}"
+           "td{padding:.2em .5em;border-bottom:1px solid #333}"
+           "td.k{color:#888;width:40%}"
+           "</style></head><body>"
+           "<h1>BPF SO2R / TCI — live</h1>"
+           "<p class='meta' id='meta'>connecting…</p>"
+           "<div class='lcd' id='lcd'>--------------\n--------------</div>"
+           "<table id='sensors'><tr><td colspan=2 class='k'>sensors (mV)</td></tr>"
+           "<tr><td class='k'>BPF 1 fwd / rev</td><td id='s12'>– / –</td></tr>"
+           "<tr><td class='k'>BPF 2 fwd / rev</td><td id='s34'>– / –</td></tr></table>"
+           "<p class='meta'><a href='/'>back to portal</a> &middot; "
+           "<a href='/status'>/status JSON</a></p>"
+           "<script>(function(){"
+           "var loc=window.location.hostname;"
+           "var ws=new WebSocket('ws://'+loc+':81/');"
+           "function fmt(hz){if(hz<=0)return '----.----';"
+           "return (hz/1e6).toFixed(4);}"
+           "function pad(s,w){s=String(s);while(s.length<w)s=' '+s;return s;}"
+           "function row(r){"
+           "var link=r.link?' ':'*';"
+           "var st=r.tune?'TU':'RX';"
+           "return link+pad(fmt(r.freq),8)+' '+pad(r.band||'---',4)+' '+st;}"
+           "ws.onopen=function(){document.getElementById('meta').textContent='connected';};"
+           "ws.onclose=function(){document.getElementById('meta').textContent='disconnected (refresh to retry)';};"
+           "ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);"
+           "document.getElementById('lcd').textContent=row(d.r1)+'\\n'+row(d.r2);"
+           "document.getElementById('meta').innerHTML="
+           "'firmware v'+d.version+' &middot; <span class=\\'pill '+(d.r1.link?'up':'down')+"
+           "'\\'>R1 '+(d.r1.link?'up':'down')+'</span> '+"
+           "'<span class=\\'pill '+(d.r2.link?'up':'down')+'\\'>R2 '+(d.r2.link?'up':'down')+'</span>';"
+           "var m=d.mv||[0,0,0,0];"
+           "document.getElementById('s12').textContent=m[0]+' / '+m[1];"
+           "document.getElementById('s34').textContent=m[2]+' / '+m[3];"
+           "}catch(e){}};"
+           "})();</script>"
+           "</body></html>");
+    server_.send(200, "text/html", h);
   }
 
   void handleBypass() {
