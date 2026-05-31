@@ -38,7 +38,7 @@
 
 namespace bpf {
 
-constexpr const char* kDefaultHostname = "bpf-so2r";
+constexpr const char* kDefaultHostname = "SO2R-BPF";
 constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 
 // Pin map — active-LOW; HIGH = idle (relay off). See ESP32_SO2R_TCI/README.md.
