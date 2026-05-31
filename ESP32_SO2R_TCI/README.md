@@ -194,16 +194,60 @@ Default TCI port for ExpertSDR3 / SunSDR is **50001**. IARU region 1 / 2
 
 ## Build / flash
 
+### First-time flash (USB)
+
 ```bash
 arduino-cli core install esp32:esp32     # once
 arduino-cli lib install WebSockets "LiquidCrystal I2C"
-arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
   --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
 ```
 
-(Pick whichever ESP32 board profile matches your dev board — `esp32`
-is the generic profile and works for nearly every variant. Forcing
-`UploadSpeed=115200` works around CH340 noise at the default 921600.)
+`PartitionScheme=min_spiffs` is the partition table that gives each
+OTA slot 1.9 MB (instead of the default 1.25 MB) — required so the
+firmware fits comfortably and leaves room to grow. `UploadSpeed=115200`
+works around CH340 noise at the default 921600.
+
+This first USB flash also writes the partition table itself, so it
+**has to be done over USB** once before OTA can take over. Subsequent
+flashes can go either way.
+
+### Subsequent flashes (over Wi-Fi, via ArduinoOTA)
+
+Once the device is on station Wi-Fi, swap the `--port` from the
+USB‑serial path to the device's mDNS hostname — everything else stays
+the same:
+
+```bash
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
+  --upload --port SO2R-BPF.local ESP32_SO2R_TCI
+```
+
+`arduino-cli` discovers the OTA endpoint via mDNS (the device
+advertises `_arduino._tcp` on UDP 3232) and runs `espota.py` under
+the hood. No new tooling.
+
+When an OTA upload starts, the firmware forces both BPFs to bypass
+for the duration so an in-flight ATU tune sweep can't hot‑switch a
+filter section while the binary is being rewritten:
+
+```
+[ota] update starting (sketch) — forcing both BPFs to bypass
+[BPF1] TUNE change -> ON  (forcing bypass)
+[BPF2] TUNE change -> ON  (forcing bypass)
+[ota] 10%
+[ota] 20%
+…
+[ota] update complete, rebooting
+```
+
+OTA defaults to **no password** — the service binds to the LAN and
+for a hamshack network that's the typical security model. To require
+a password, edit `kOtaPassword` near the top of
+`ESP32_SO2R_TCI.ino` and reflash via USB once; subsequent OTA uploads
+then need `--upload-field password=<your-password>`.
 
 ## Status / debug
 

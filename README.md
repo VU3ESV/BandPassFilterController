@@ -59,12 +59,20 @@ Single sketch: [`ESP32_SO2R_TCI/`](ESP32_SO2R_TCI/).
    arduino-cli core install esp32:esp32
    arduino-cli lib install WebSockets "LiquidCrystal I2C"
    ```
-3. Flash:
+3. First flash (USB — writes the partition table):
    ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+   arduino-cli compile \
+     --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
      --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
    ```
-   (`UploadSpeed=115200` avoids CH340 noise at 921600.)
+   Subsequent flashes can go over Wi-Fi (ArduinoOTA via mDNS):
+   ```bash
+   arduino-cli compile \
+     --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
+     --upload --port SO2R-BPF.local ESP32_SO2R_TCI
+   ```
+   (`min_spiffs` gives each OTA slot 1.9 MB; `UploadSpeed=115200`
+   avoids CH340 noise at 921600.)
 4. First boot raises `BPF-Setup-XXXXXX` SoftAP at `192.168.4.1`.
    Configure WiFi + both radio endpoints (default TCI port is `50001`)
    + hostname, save, reboot. Then reach the portal at

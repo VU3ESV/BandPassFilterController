@@ -142,13 +142,26 @@ cable in and:
 ```bash
 arduino-cli core install esp32:esp32
 arduino-cli lib install WebSockets "LiquidCrystal I2C"
-arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
   --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
+
+# After the first USB flash, subsequent uploads can go over Wi-Fi:
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
+  --upload --port SO2R-BPF.local ESP32_SO2R_TCI
 ```
 
 `UploadSpeed=115200` is intentional — the default 921600 introduces
 sync errors on cheap CH340 clones. The compile + flash takes about
 80 seconds on a stock Mac.
+
+`PartitionScheme=min_spiffs` gives each OTA app slot 1.9 MB (vs the
+default 1.25 MB), so the firmware fits with headroom for growth.
+This first USB flash also writes the partition table to flash — OTA
+itself can only update app slots, not the table — so the partition
+choice has to be locked in over USB once before subsequent OTA flashes
+take over.
 
 ### macOS USB‑serial caveats (verified 2026‑05)
 
