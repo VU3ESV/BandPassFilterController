@@ -61,6 +61,7 @@ WARC / 60 m / 6 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
 | --- | --- | --- |
 | `TCI` by IW7DMH v1.0.1 | bundled at [`../.support/TCI-2/`](../.support/TCI-2/) — see also <https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/> | TCI WebSocket client |
 | `WebSockets` by Markus Sattler | install via Arduino Library Manager (`arduino-cli lib install WebSockets`) | required transitively by `TCI` |
+| `LiquidCrystal I2C` by Frank de Brabander | install via Arduino Library Manager (`arduino-cli lib install "LiquidCrystal I2C"`) | 16×2 I²C LCD driver. (The library's `library.properties` claims AVR-only; it works on ESP32 anyway — `Wire.h` underneath is portable. Expect a harmless "may be incompatible" warning at compile time.) |
 
 ### Install the bundled TCI library
 
@@ -151,11 +152,27 @@ BandPassFilterController :: ESP32 SO2R / TCI
 If either WiFi or a TCI link drops, the affected bank is forced to
 INHIBIT (bypass) until the link comes back.
 
+## 16×2 I²C LCD
+
+Connect a standard PCF8574‑backed 16×2 LCD to the ESP32's I²C pins
+(`SDA` = GPIO 21, `SCL` = GPIO 22 on most dev boards) and 5 V / GND.
+The LCD comes up at 0x27 by default; some modules ship at 0x3F — change
+the `g_lcd.begin()` argument in `setup()` if yours is 0x3F.
+
+Layout (mirrors the reference MQTT sketch, condensed to 16 columns):
+
+```
+Row 0:  ' 14.2500 USB RX'      <- Radio 1: freq MHz, mode, TX/RX
+Row 1:  '  7.1000 LSB TX'      <- Radio 2
+```
+
+A FreeRTOS task pinned to **core 1** redraws every 500 ms; the TCI
+event handlers on core 0 push updates behind a mutex. While a radio
+hasn't reported its VFO yet the row shows `----.----  --` so it's
+obvious which link hasn't synced.
+
 ## What's not in this build
 
-- **No LCD.** The reference MQTT sketch drives a 16×2 I²C LCD; left out
-  here to keep the build small. Trivial to add back via the
-  `LiquidCrystal_I2C` library.
 - **No SO2R swap mode.** Each BPF is dedicated to one radio. Add a
   build‑time `#define BPF_SO2R_SWAP` and read each TCI's `getTrx()` /
   `getTxEnable()` state if you want the reference's

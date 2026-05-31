@@ -34,6 +34,7 @@
 #include "Config.h"
 #include "BcdBandPlan.h"
 #include "WebPortal.h"
+#include "LcdDisplay.h"
 
 namespace bpf {
 
@@ -58,6 +59,7 @@ Config        g_cfg;
 TCI           g_radio1;
 TCI           g_radio2;
 WebPortal     g_web;
+LcdDisplay    g_lcd;
 DNSServer     g_dns;
 bool          g_apMode    = false;
 volatile long g_lastFreq1 = 0;
@@ -125,6 +127,7 @@ void onRadio1Vfo(const int senderRig, const int senderVfo) {
   if (hz <= 0) return;
   g_lastFreq1 = hz;
   applyBand(0, hz);
+  g_lcd.setFreq(0, hz);
 }
 
 void onRadio2Vfo(const int senderRig, const int senderVfo) {
@@ -133,6 +136,21 @@ void onRadio2Vfo(const int senderRig, const int senderVfo) {
   if (hz <= 0) return;
   g_lastFreq2 = hz;
   applyBand(1, hz);
+  g_lcd.setFreq(1, hz);
+}
+
+void onRadio1Modulation(const int senderRig) {
+  g_lcd.setMode(0, g_radio1.rtx[senderRig].getModulation());
+}
+void onRadio2Modulation(const int senderRig) {
+  g_lcd.setMode(1, g_radio2.rtx[senderRig].getModulation());
+}
+
+void onRadio1Trx(const int senderRig) {
+  g_lcd.setTx(0, g_radio1.rtx[senderRig].getTrx());
+}
+void onRadio2Trx(const int senderRig) {
+  g_lcd.setTx(1, g_radio2.rtx[senderRig].getTrx());
 }
 
 void onRadio1Connected() { Serial.println("[R1] TCI conn event"); }
@@ -162,6 +180,8 @@ void startTciClients() {
   g_radio1.set_iaru_region(g_cfg.radio1_iaru);
   g_radio1.attach_conn_disc_event(onRadio1Connected);
   g_radio1.attach_vfo_event(onRadio1Vfo);
+  g_radio1.attach_modulation_event(onRadio1Modulation);
+  g_radio1.attach_trx_event(onRadio1Trx);
   g_radio1.connect();
   Serial.printf("[R1] TCI connecting to %s:%u (IARU %u)\n",
                 g_cfg.radio1_host, g_cfg.radio1_port, g_cfg.radio1_iaru);
@@ -172,6 +192,8 @@ void startTciClients() {
   g_radio2.set_iaru_region(g_cfg.radio2_iaru);
   g_radio2.attach_conn_disc_event(onRadio2Connected);
   g_radio2.attach_vfo_event(onRadio2Vfo);
+  g_radio2.attach_modulation_event(onRadio2Modulation);
+  g_radio2.attach_trx_event(onRadio2Trx);
   g_radio2.connect();
   Serial.printf("[R2] TCI connecting to %s:%u (IARU %u)\n",
                 g_cfg.radio2_host, g_cfg.radio2_port, g_cfg.radio2_iaru);
@@ -216,6 +238,10 @@ void setup() {
   // Drive BCD banks to IDLE before WiFi starts.
   bpf::setupBank(bpf::kBank1);
   bpf::setupBank(bpf::kBank2);
+
+  // LCD — comes up immediately so the user sees "starting..." even if
+  // WiFi takes a while.
+  bpf::g_lcd.begin();
 
   if (!bpf::load(bpf::g_cfg)) {
     Serial.println(F("[cfg] no valid config, loading defaults!"));
