@@ -98,7 +98,7 @@ void setup() {
   bpf::pinSetup();  // outputs LOW (bypass) before WiFi starts
 
   if (!bpf::load(bpf::g_cfg)) {
-    Serial.println(F("[cfg] no valid config, loading defaults"));
+    Serial.println(F("[cfg] no valid config, loading defaults!"));
     bpf::defaults(bpf::g_cfg, bpf::kDefaultHostname);
   }
 
