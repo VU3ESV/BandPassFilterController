@@ -122,8 +122,10 @@ void applyBand(int radioIndex, long hz) {
 // =============================================================================
 
 void onRadio1Vfo(const int senderRig, const int senderVfo) {
-  if (senderVfo != 0) return;  // only track VFO A
-  long hz = g_radio1.rtx[senderRig].getVfo(0);
+  long hz = g_radio1.rtx[senderRig].getVfo(senderVfo);
+  Serial.printf("[R1] vfo evt rig=%d vfo=%d hz=%ld\n",
+                senderRig, senderVfo, hz);
+  if (senderRig != 0 || senderVfo != 0) return;  // only main RX, VFO A
   if (hz <= 0) return;
   g_lastFreq1 = hz;
   applyBand(0, hz);
@@ -131,8 +133,10 @@ void onRadio1Vfo(const int senderRig, const int senderVfo) {
 }
 
 void onRadio2Vfo(const int senderRig, const int senderVfo) {
-  if (senderVfo != 0) return;
-  long hz = g_radio2.rtx[senderRig].getVfo(0);
+  long hz = g_radio2.rtx[senderRig].getVfo(senderVfo);
+  Serial.printf("[R2] vfo evt rig=%d vfo=%d hz=%ld\n",
+                senderRig, senderVfo, hz);
+  if (senderRig != 0 || senderVfo != 0) return;
   if (hz <= 0) return;
   g_lastFreq2 = hz;
   applyBand(1, hz);
