@@ -39,6 +39,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <DNSServer.h>
+#include <ArduinoOTA.h>
 
 #include "TCI.h"
 #include "Config.h"
@@ -336,6 +337,8 @@ void onWifiStaStart(arduino_event_id_t event) {
   }
 }
 
+void setupOta();  // forward-declare; full definition below startStaMode
+
 void startStaMode() {
   WiFi.onEvent(onWifiStaStart, ARDUINO_EVENT_WIFI_STA_START);
   WiFi.mode(WIFI_STA);
@@ -354,11 +357,83 @@ void startStaMode() {
       MDNS.addService("http", "tcp", 80);
       Serial.printf("[mdns] http://%s.local/\r\n", g_cfg.hostname);
     }
+    setupOta();
     startTciClients();
   } else {
     Serial.println("[wifi] STA failed; falling back to AP portal");
     startApMode();
   }
+}
+
+// =============================================================================
+// Over-the-air firmware update (ArduinoOTA).
+//
+// Once Wi-Fi is up, the device exposes the standard espota service on
+// UDP 3232 with mDNS hostname <hostname>.local. arduino-cli picks it
+// up exactly like a USB serial port:
+//
+//   arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+//     --upload --port SO2R-BPF.local ESP32_SO2R_TCI
+//
+// Default partition is min_spiffs so both 1.9 MB OTA slots fit the
+// firmware with comfortable headroom (the original default.csv 1.25 MB
+// slots were already at 94% before adding OTA).
+//
+// kOtaPassword is empty by default — the OTA service binds to the LAN
+// only, and for a hamshack network that's the typical security model.
+// Set a non-empty value here to require espota to authenticate; the
+// upload side then needs `--upload-field password=<your-password>` (or
+// the matching Arduino IDE prompt).
+// =============================================================================
+
+constexpr const char* kOtaPassword = "";
+
+void setupOta() {
+  ArduinoOTA.setHostname(g_cfg.hostname);
+  if (kOtaPassword[0] != '\0') {
+    ArduinoOTA.setPassword(kOtaPassword);
+  }
+  ArduinoOTA.onStart([]() {
+    const char* type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "fs";
+    Serial.printf("[ota] update starting (%s) — forcing both BPFs to bypass\r\n", type);
+    // Belt-and-braces: drop both banks to bypass for the duration of
+    // the flash so an in-flight ATU tune sweep can't hot-switch
+    // a filter section while the firmware is being rewritten.
+    onTuneChange(0, true);
+    onTuneChange(1, true);
+    // Free the WiFi stack for the OTA upload. The TCI WebSocket
+    // reader tasks compete with espota for bandwidth and reliably
+    // cause a "Broken pipe" partway through the transfer if left
+    // running. The device is rebooting at the end of the OTA anyway,
+    // so a clean disconnect now is the right move.
+    g_radio1.disconnect();
+    if (!g_sharedTci) g_radio2.disconnect();
+  });
+  ArduinoOTA.onProgress([](unsigned int prog, unsigned int total) {
+    static int lastPct = -1;
+    int pct = (int)((prog * 100UL) / total);
+    if (pct != lastPct && (pct % 10) == 0) {  // log every 10%
+      Serial.printf("[ota] %d%%\r\n", pct);
+      lastPct = pct;
+    }
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("[ota] update complete, rebooting");
+  });
+  ArduinoOTA.onError([](ota_error_t err) {
+    const char* msg = "?";
+    switch (err) {
+      case OTA_AUTH_ERROR:    msg = "auth failed";    break;
+      case OTA_BEGIN_ERROR:   msg = "begin failed";   break;
+      case OTA_CONNECT_ERROR: msg = "connect failed"; break;
+      case OTA_RECEIVE_ERROR: msg = "receive failed"; break;
+      case OTA_END_ERROR:     msg = "end failed";     break;
+    }
+    Serial.printf("[ota] error %u: %s\r\n", err, msg);
+  });
+  ArduinoOTA.begin();
+  Serial.printf("[ota] ready at %s.local:3232 (password=%s)\r\n",
+                g_cfg.hostname, kOtaPassword[0] ? "yes" : "none");
 }
 
 }  // namespace bpf
@@ -395,7 +470,10 @@ void setup() {
 
 void loop() {
   bpf::g_web.tick();
-  if (bpf::g_apMode) bpf::g_dns.processNextRequest();
+  // OTA only runs in STA mode (no point in AP / portal mode — no LAN to
+  // upload from). ArduinoOTA::handle() is a cheap UDP packet check.
+  if (!bpf::g_apMode) ArduinoOTA.handle();
+  if (bpf::g_apMode)  bpf::g_dns.processNextRequest();
 
   // Failsafe + link status: every 250 ms check WiFi + TCI health and force
   // bypass on the affected bank if the link drops. Also push the link

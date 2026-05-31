@@ -188,14 +188,30 @@ Serial commands at 115200: `status`, `reset`,
 ```bash
 arduino-cli core install esp32:esp32
 arduino-cli lib install WebSockets "LiquidCrystal I2C"
-arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+# First flash MUST be over USB (writes the partition table):
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
   --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
+# Subsequent flashes can use ArduinoOTA over Wi-Fi:
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200,PartitionScheme=min_spiffs \
+  --upload --port SO2R-BPF.local ESP32_SO2R_TCI
 ```
 
-`UploadSpeed=115200` works around CH340 noise at the 921600 default.
-`WebSockets` is a transitive dep of TCI; `LiquidCrystal I2C` claims
-AVR‑only but works on ESP32 (Wire is portable — expect a harmless
-warning at compile time).
+- `PartitionScheme=min_spiffs` is required: each OTA slot becomes
+  1.9 MB instead of the default 1.25 MB so the firmware fits with
+  headroom for growth. The first USB flash writes the partition
+  table itself; once that's in place, OTA can take over.
+- `UploadSpeed=115200` works around CH340 noise at the 921600
+  default.
+- `WebSockets` is a transitive dep of TCI; `LiquidCrystal I2C`
+  claims AVR‑only but works on ESP32 (Wire is portable — expect a
+  harmless warning at compile time).
+- On OTA start the firmware forces both BPFs to bypass (`onTuneChange(0, true);`
+  `onTuneChange(1, true);`) so an in-flight ATU tune sweep can't
+  hot‑switch a filter section while the binary is being rewritten.
+  OTA defaults to no password — set `kOtaPassword` in
+  `ESP32_SO2R_TCI.ino` and reflash over USB once to enable.
 
 ## Defaults / safety
 
