@@ -20,3 +20,12 @@ Thumbs.db
 # Local Claude state (do not leak)
 .claude/
 memory/
+
+# Bundled third-party Arduino libraries shipped inside TCI-2 — not used
+# by our sketch; keep out of the repo.
+.support/TCI-2/support_libs.zip
+
+# Exploratory pin-scan sketch from the ESP32-S2 misdetection episode —
+# the actual board turned out to be ESP8266; sketch retained locally for
+# reference but not committed.
+ESP32S2_PinScan/

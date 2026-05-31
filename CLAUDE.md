@@ -3,7 +3,10 @@
 ESP12 (ESP8266) firmware that drives an HF contest band‑pass filter (BPF) by
 reading the operating frequency of an attached radio over the network.
 
-Two filter models are targeted, one firmware build per device:
+Two filter models are targeted. Two delivery variants currently coexist in
+the repo:
+
+**A — single‑board, ESP8266, Kenwood `IF;` over TCP (the original):**
 
 - **5B4AGN TXBPF** — high‑power contest filter discussed at
   <https://groups.io/g/TXBPF>. Six switched filter sections (160/80/40/20/15/10 m)
@@ -12,6 +15,23 @@ Two filter models are targeted, one firmware build per device:
   <https://www.hamation.com/Bandpasser.html>. Each band is engaged by applying
   +5–12 V to a rear‑panel control pin; with no input it falls back to bypass.
   Code lives in [Hamation/](Hamation/).
+
+Each ESP‑12F talks to one radio over Kenwood `IF;` CAT (Thetis, Node‑Red
+bridge, hamlib `rigctld`). One controller per filter, one filter per radio.
+1‑of‑6 relay outputs, active‑HIGH on the LC Tech `ESP12F_Relay_X8` carrier.
+
+**B — single ESP32, **two** TCI WebSocket radios, **two** BCD outputs:**
+
+- **[ESP32_SO2R_TCI/](ESP32_SO2R_TCI/)** — one ESP32 dev board carries two
+  simultaneous TCI client connections (one per radio) and emits two
+  independent Yaesu‑style 4‑bit BCD band‑data buses plus inhibit lines.
+  Drives a 5B4AGN and a Hamation **at the same time**, one per radio.
+  Active‑LOW outputs on the same 8‑relay carrier (different wiring than
+  variant A). Derived from
+  [`.support/ESP32MQTTSwitchV2.ino`](.support/ESP32MQTTSwitchV2.ino) with
+  MQTT swapped for TCI via the
+  [IW7DMH TCI library](https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/)
+  (bundled at [.support/TCI-2/](.support/TCI-2/)).
 
 ## Objectives
 
