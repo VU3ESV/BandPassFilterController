@@ -52,7 +52,7 @@ constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 // lines HIGH on the affected bank, which presents the BPF with "no band
 // data applied" — same as the bypass state.
 constexpr BcdBank kBank1 = { .pinA = 16, .pinB = 17, .pinC = 18, .pinD = 19 };
-constexpr BcdBank kBank2 = { .pinA = 33, .pinB = 32, .pinC = 27, .pinD = 26 };
+constexpr BcdBank kBank2 = { .pinA = 26, .pinB = 27, .pinC = 32, .pinD = 33 };
 
 // Globals.
 Config        g_cfg;
