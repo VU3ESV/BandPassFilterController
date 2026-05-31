@@ -40,6 +40,7 @@
 #include <ESPmDNS.h>
 #include <DNSServer.h>
 #include <ArduinoOTA.h>
+#include <WebSocketsServer.h>
 
 #include "TCI.h"
 #include "Config.h"
@@ -51,6 +52,31 @@ namespace bpf {
 
 constexpr const char* kDefaultHostname = "SO2R-BPF";
 constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
+// Bump on every meaningful release. Also surfaced in the portal
+// banner, in /status, and in /config so an OTA target is unambiguous.
+constexpr const char* kFirmwareVersion = "0.5.0";
+constexpr const char* kFirmwareBuild   = __DATE__ " " __TIME__;
+
+// Forward + reflected power sensor inputs (ADC1; all four are
+// input-only GPIOs so they don't steal an output pin). Wire the
+// directional coupler's detector outputs here through a 0..3.3 V
+// scaling network. analogReadMilliVolts() returns calibrated mV.
+constexpr uint8_t kSensorBpf1Fwd = 34;   // ADC1_CH6
+constexpr uint8_t kSensorBpf1Rev = 35;   // ADC1_CH7
+constexpr uint8_t kSensorBpf2Fwd = 36;   // ADC1_CH0 (SVP)
+constexpr uint8_t kSensorBpf2Rev = 39;   // ADC1_CH3 (SVN)
+
+// Band-change ring buffer. Pushed by applyBand(); read out via
+// /status JSON; cleared via POST /history?clear=YES.
+struct BandEvent {
+  uint32_t uptime_s;   // seconds since boot at the time of the change
+  uint8_t  bpf;        // 1 or 2
+  long     freq_hz;    // last known freq when the bank was rewritten
+  uint8_t  code;       // BCD code emitted
+  bool     inhibit;    // was this a bypass push?
+  bool     tune;       // was tune active at the time?
+};
+constexpr size_t kHistoryCap = 50;
 
 // Pin map — active-LOW; HIGH = idle (relay off). See ESP32_SO2R_TCI/README.md.
 //
@@ -85,6 +111,20 @@ volatile bool    g_lastLink2 = false;
 volatile bool    g_tune1     = false;
 volatile bool    g_tune2     = false;
 
+// Band-change ring buffer.
+BandEvent g_history[kHistoryCap];
+size_t    g_historyHead  = 0;     // next slot to write
+size_t    g_historyCount = 0;     // total fill, capped at kHistoryCap
+
+// ADC sensor smoothing: exponential moving average in mV.
+// alpha = 1/8 (kept as integer math via right-shift in update path).
+volatile int g_sensorMv[4] = {0, 0, 0, 0};   // {bpf1_fwd, bpf1_rev, bpf2_fwd, bpf2_rev}
+
+// WebSocket server for the /live page. Port 81 to keep the HTTP
+// portal on 80. Broadcasts a JSON snapshot every 250 ms when any
+// client is connected (idle when none — costs almost nothing).
+WebSocketsServer g_wsServer(81);
+
 // =============================================================================
 // Status JSON for /status.
 // =============================================================================
@@ -93,24 +133,49 @@ String statusJson() {
   bool r1up = g_radio1.connected();
   bool r2up = g_sharedTci ? r1up : g_radio2.connected();
   String j;
-  j.reserve(360);
+  // Grow a bit; the history block can be ~1.5 KB at full 50 entries.
+  j.reserve(2200);
   j += "{";
-  j += "\"filter\":\""; j += kFilterLabel;                                  j += "\",";
-  j += "\"mode\":\"";   j += (g_sharedTci ? "shared" : "dual");              j += "\",";
-  j += "\"ap_mode\":";  j += (g_apMode ? "true" : "false");                  j += ",";
-  j += "\"wifi\":\"";   j += (WiFi.status() == WL_CONNECTED ? "up" : "down");j += "\",";
-  j += "\"ip\":\"";     j += (g_apMode ? WiFi.softAPIP().toString()
-                                       : WiFi.localIP().toString());         j += "\",";
-  j += "\"rssi\":";     j += WiFi.RSSI();                                    j += ",";
+  j += "\"filter\":\"";  j += kFilterLabel;                                   j += "\",";
+  j += "\"version\":\""; j += kFirmwareVersion;                               j += "\",";
+  j += "\"build\":\"";   j += kFirmwareBuild;                                 j += "\",";
+  j += "\"mode\":\"";    j += (g_sharedTci ? "shared" : "dual");              j += "\",";
+  j += "\"ap_mode\":";   j += (g_apMode ? "true" : "false");                  j += ",";
+  j += "\"wifi\":\"";    j += (WiFi.status() == WL_CONNECTED ? "up" : "down");j += "\",";
+  j += "\"ip\":\"";      j += (g_apMode ? WiFi.softAPIP().toString()
+                                        : WiFi.localIP().toString());         j += "\",";
+  j += "\"rssi\":";      j += WiFi.RSSI();                                    j += ",";
   j += "\"r1\":{\"connected\":"; j += (r1up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq1;
-  j += ",\"band\":\"";           j += bandName(g_lastBand1, g_lastInh1);     j += "\"";
+  j += ",\"band\":\"";           j += bandName(g_lastBand1, g_lastInh1);      j += "\"";
   j += ",\"tuning\":";           j += (g_tune1 ? "true" : "false");           j += "},";
   j += "\"r2\":{\"connected\":"; j += (r2up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq2;
-  j += ",\"band\":\"";           j += bandName(g_lastBand2, g_lastInh2);     j += "\"";
+  j += ",\"band\":\"";           j += bandName(g_lastBand2, g_lastInh2);      j += "\"";
   j += ",\"tuning\":";           j += (g_tune2 ? "true" : "false");           j += "},";
-  j += "\"uptime_s\":";          j += (millis() / 1000);
+  j += "\"sensors\":{";
+  j += "\"bpf1_fwd_mv\":"; j += g_sensorMv[0]; j += ",";
+  j += "\"bpf1_rev_mv\":"; j += g_sensorMv[1]; j += ",";
+  j += "\"bpf2_fwd_mv\":"; j += g_sensorMv[2]; j += ",";
+  j += "\"bpf2_rev_mv\":"; j += g_sensorMv[3]; j += "},";
+
+  // Band-change history — oldest first so a UI can append in order.
+  j += "\"history\":[";
+  size_t start = (g_historyCount == kHistoryCap) ? g_historyHead : 0;
+  for (size_t i = 0; i < g_historyCount; i++) {
+    const BandEvent& e = g_history[(start + i) % kHistoryCap];
+    if (i > 0) j += ",";
+    j += "{\"t\":";        j += e.uptime_s;
+    j += ",\"bpf\":";      j += e.bpf;
+    j += ",\"hz\":";       j += e.freq_hz;
+    j += ",\"code\":";     j += e.code;
+    j += ",\"inh\":";      j += (e.inhibit ? "true" : "false");
+    j += ",\"tune\":";     j += (e.tune ? "true" : "false");
+    j += "}";
+  }
+  j += "],";
+  j += "\"history_count\":"; j += g_historyCount; j += ",";
+  j += "\"uptime_s\":";      j += (millis() / 1000);
   j += "}";
   return j;
 }
@@ -118,6 +183,20 @@ String statusJson() {
 // =============================================================================
 // BCD drive helpers — only push to the bank when the decoded band changes.
 // =============================================================================
+
+// Append to the band-change ring buffer. Overwrites the oldest entry
+// when full; callers don't need to check capacity.
+void pushHistory(int radioIndex, long hz, const BcdResult& r, bool tuning) {
+  BandEvent& e = g_history[g_historyHead];
+  e.uptime_s = millis() / 1000;
+  e.bpf      = (uint8_t)(radioIndex + 1);
+  e.freq_hz  = hz;
+  e.code     = r.code;
+  e.inhibit  = r.inhibit;
+  e.tune     = tuning;
+  g_historyHead = (g_historyHead + 1) % kHistoryCap;
+  if (g_historyCount < kHistoryCap) g_historyCount++;
+}
 
 void applyBand(int radioIndex, long hz) {
   // Decoded band, then bypass override. We never emit 0000 for bypass:
@@ -146,6 +225,7 @@ void applyBand(int radioIndex, long hz) {
     Serial.printf("[R2] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\r\n",
                   bandName(r.code, r.inhibit), hz, r.code, r.inhibit, tuning);
   }
+  pushHistory(radioIndex, hz, r, tuning);
 }
 
 // Tune state change: latch the new flag, re-evaluate the BCD bank
@@ -337,7 +417,12 @@ void onWifiStaStart(arduino_event_id_t event) {
   }
 }
 
-void setupOta();  // forward-declare; full definition below startStaMode
+void setupOta();           // forward-declares; full bodies live below
+void setupSensors();
+void readSensorsTick();
+void wsBroadcastIfDue();
+void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t len);
+String liveJsonSnapshot();
 
 void startStaMode() {
   WiFi.onEvent(onWifiStaStart, ARDUINO_EVENT_WIFI_STA_START);
@@ -358,6 +443,9 @@ void startStaMode() {
       Serial.printf("[mdns] http://%s.local/\r\n", g_cfg.hostname);
     }
     setupOta();
+    g_wsServer.begin();
+    g_wsServer.onEvent(onWsEvent);
+    Serial.printf("[ws] live status server on port 81\r\n");
     startTciClients();
   } else {
     Serial.println("[wifi] STA failed; falling back to AP portal");
@@ -448,6 +536,87 @@ void setupOta() {
                 g_cfg.hostname, kOtaPassword[0] ? "yes" : "none");
 }
 
+// =============================================================================
+// ADC power sensors. analogReadMilliVolts() returns calibrated mV
+// (uses the per-chip eFuse calibration when present, otherwise a
+// reasonable default). Each call is ~30 µs; we sample once per tick
+// and feed an EMA so /status reports a smooth value rather than a
+// jittery instantaneous one.
+// =============================================================================
+
+void setupSensors() {
+  analogSetAttenuation(ADC_11db);  // 0..3.3 V input range
+  pinMode(kSensorBpf1Fwd, INPUT);
+  pinMode(kSensorBpf1Rev, INPUT);
+  pinMode(kSensorBpf2Fwd, INPUT);
+  pinMode(kSensorBpf2Rev, INPUT);
+}
+
+// EMA with alpha = 1/8: new = old*7/8 + sample*1/8.
+inline int ema(int prev, int sample) {
+  return ((prev * 7) + sample) >> 3;
+}
+
+void readSensorsTick() {
+  g_sensorMv[0] = ema(g_sensorMv[0], (int)analogReadMilliVolts(kSensorBpf1Fwd));
+  g_sensorMv[1] = ema(g_sensorMv[1], (int)analogReadMilliVolts(kSensorBpf1Rev));
+  g_sensorMv[2] = ema(g_sensorMv[2], (int)analogReadMilliVolts(kSensorBpf2Fwd));
+  g_sensorMv[3] = ema(g_sensorMv[3], (int)analogReadMilliVolts(kSensorBpf2Rev));
+}
+
+// =============================================================================
+// WebSocket live status. One snapshot every 250 ms when at least one
+// client is connected — idle otherwise. Snapshot is compact JSON so
+// even a flaky phone hotspot can keep up.
+// =============================================================================
+
+void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
+  if (type == WStype_CONNECTED) {
+    Serial.printf("[ws] client %u connected\r\n", num);
+    // Push an immediate snapshot so the page paints right away.
+    String s = liveJsonSnapshot();
+    g_wsServer.sendTXT(num, s);
+  } else if (type == WStype_DISCONNECTED) {
+    Serial.printf("[ws] client %u disconnected\r\n", num);
+  }
+}
+
+String liveJsonSnapshot() {
+  String j;
+  j.reserve(420);
+  j += "{\"version\":\""; j += kFirmwareVersion; j += "\",";
+  j += "\"r1\":{";
+  j += "\"link\":";  j += (g_lastLink1 ? "true" : "false");
+  j += ",\"freq\":"; j += g_lastFreq1;
+  j += ",\"band\":\""; j += bandName(g_lastBand1, g_lastInh1); j += "\"";
+  j += ",\"tune\":";  j += (g_tune1 ? "true" : "false");
+  j += "},\"r2\":{";
+  j += "\"link\":";  j += (g_lastLink2 ? "true" : "false");
+  j += ",\"freq\":"; j += g_lastFreq2;
+  j += ",\"band\":\""; j += bandName(g_lastBand2, g_lastInh2); j += "\"";
+  j += ",\"tune\":";  j += (g_tune2 ? "true" : "false");
+  j += "},\"mv\":[";
+  j += g_sensorMv[0]; j += ",";
+  j += g_sensorMv[1]; j += ",";
+  j += g_sensorMv[2]; j += ",";
+  j += g_sensorMv[3]; j += "]}";
+  return j;
+}
+
+void wsBroadcastIfDue() {
+  if (g_wsServer.connectedClients() == 0) return;
+  String s = liveJsonSnapshot();
+  g_wsServer.broadcastTXT(s);
+}
+
+// Wipe the band-change ring buffer. Returns the previous count.
+size_t clearHistory() {
+  size_t prev = g_historyCount;
+  g_historyHead  = 0;
+  g_historyCount = 0;
+  return prev;
+}
+
 }  // namespace bpf
 
 // =============================================================================
@@ -458,11 +627,15 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println();
-  Serial.println(F("BandPassFilterController :: ESP32 SO2R / TCI"));
+  Serial.printf("BandPassFilterController :: ESP32 SO2R / TCI  v%s (%s)\r\n",
+                bpf::kFirmwareVersion, bpf::kFirmwareBuild);
 
   // Drive BCD banks to IDLE before WiFi starts.
   bpf::setupBank(bpf::kBank1);
   bpf::setupBank(bpf::kBank2);
+
+  // ADC sensor inputs (forward + reflected power, BPF 1 and BPF 2).
+  bpf::setupSensors();
 
   // LCD — comes up immediately so the user sees "starting..." even if
   // WiFi takes a while.
@@ -477,14 +650,20 @@ void setup() {
   else                                  bpf::startApMode();
 
   bpf::g_web.begin(bpf::g_cfg, bpf::statusJson,
-                   [](int bpfIdx, bool on) { bpf::onTuneChange(bpfIdx, on); });
+                   [](int bpfIdx, bool on) { bpf::onTuneChange(bpfIdx, on); },
+                   []() -> size_t { return bpf::clearHistory(); },
+                   bpf::kFirmwareVersion, bpf::kFirmwareBuild);
 }
 
 void loop() {
   bpf::g_web.tick();
-  // OTA only runs in STA mode (no point in AP / portal mode — no LAN to
-  // upload from). ArduinoOTA::handle() is a cheap UDP packet check.
-  if (!bpf::g_apMode) ArduinoOTA.handle();
+  // OTA + WS server only matter in STA mode (no point in AP / portal
+  // mode — no LAN to upload from / no client likely on a captive AP).
+  // ArduinoOTA::handle() and WebSocketsServer::loop() are cheap polls.
+  if (!bpf::g_apMode) {
+    ArduinoOTA.handle();
+    bpf::g_wsServer.loop();
+  }
   if (bpf::g_apMode)  bpf::g_dns.processNextRequest();
 
   // Failsafe + link status: every 250 ms check WiFi + TCI health and force
@@ -510,6 +689,10 @@ void loop() {
       bpf::g_lastLink2 = r2Up;
       bpf::g_lcd.setLink(1, r2Up);
     }
+
+    // Sensor sampling + WS snapshot ride the same 250 ms tick.
+    bpf::readSensorsTick();
+    bpf::wsBroadcastIfDue();
   }
 
   // Serial console:
