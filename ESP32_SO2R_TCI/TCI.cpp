@@ -510,9 +510,19 @@ void TCI::hexdump(const void *mem, uint32_t len, uint8_t cols) {
 	Serial.printf("\n");
 }
 
-void TCI::parse_message(unsigned int length) {	
-	
+void TCI::parse_message(unsigned int length) {
+
 	char *s;
+
+	// Diagnostic tap: print verbatim any incoming TCI message whose
+	// payload contains the substring "tune". Helps confirm whether a
+	// given server (e.g. AetherSDR) emits tune-related frames under
+	// a name the library's parse_message doesn't recognise, without
+	// turning on the full TCI_LOG_UNHANDLED flood. Cheap to leave in
+	// — fires only on tune-adjacent messages, which are rare.
+	if (strstr(incoming_message, "tune") != NULL) {
+		Serial.printf("[TCI raw tune-like] %s\r\n", incoming_message);
+	}
 
 	/*
 	 *  BE CAREFUL! Sorted by event priority

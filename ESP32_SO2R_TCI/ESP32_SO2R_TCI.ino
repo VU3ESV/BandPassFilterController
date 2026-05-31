@@ -135,14 +135,14 @@ void applyBand(int radioIndex, long hz) {
     driveBank(kBank1, r);
     g_lastBand1 = r.code;
     g_lastInh1  = r.inhibit;
-    Serial.printf("[R1] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\n",
+    Serial.printf("[R1] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\r\n",
                   bandName(r.code, r.inhibit), hz, r.code, r.inhibit, tuning);
   } else {
     if (r.code == g_lastBand2 && r.inhibit == g_lastInh2) return;
     driveBank(kBank2, r);
     g_lastBand2 = r.code;
     g_lastInh2  = r.inhibit;
-    Serial.printf("[R2] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\n",
+    Serial.printf("[R2] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\r\n",
                   bandName(r.code, r.inhibit), hz, r.code, r.inhibit, tuning);
   }
 }
@@ -150,7 +150,7 @@ void applyBand(int radioIndex, long hz) {
 // Tune state change: latch the new flag, re-evaluate the BCD bank
 // using the last known frequency, and update the LCD's state column.
 void onTuneChange(int radioIndex, bool tuning) {
-  Serial.printf("[BPF%d] TUNE change -> %s\n",
+  Serial.printf("[BPF%d] TUNE change -> %s\r\n",
                 radioIndex + 1, tuning ? "ON  (forcing bypass)" : "OFF");
   if (radioIndex == 0) g_tune1 = tuning;
   else                 g_tune2 = tuning;
@@ -201,7 +201,7 @@ void onSharedTrx(const int senderRig) {
 
 void onSharedTune(const int senderRig) {
   bool t = g_radio1.rtx[senderRig].getTune();
-  Serial.printf("[tci-shared] tune evt rig=%d state=%d\n", senderRig, t);
+  Serial.printf("[tci-shared] tune evt rig=%d state=%d\r\n", senderRig, t);
   int idx = sharedBpfIndex(senderRig);
   if (idx < 0) return;
   onTuneChange(idx, t);
@@ -241,13 +241,13 @@ void onRadio2Trx(const int senderRig) {
 
 void onRadio1Tune(const int senderRig) {
   bool t = g_radio1.rtx[senderRig].getTune();
-  Serial.printf("[R1] tune evt rig=%d state=%d\n", senderRig, t);
+  Serial.printf("[R1] tune evt rig=%d state=%d\r\n", senderRig, t);
   if (senderRig != 0) return;
   onTuneChange(0, t);
 }
 void onRadio2Tune(const int senderRig) {
   bool t = g_radio2.rtx[senderRig].getTune();
-  Serial.printf("[R2] tune evt rig=%d state=%d\n", senderRig, t);
+  Serial.printf("[R2] tune evt rig=%d state=%d\r\n", senderRig, t);
   if (senderRig != 0) return;
   onTuneChange(1, t);
 }
@@ -268,7 +268,7 @@ void startApMode() {
            (unsigned)(mac & 0xFFFFFF));
   WiFi.softAP(ssid);
   IPAddress ip = WiFi.softAPIP();
-  Serial.printf("[wifi] AP '%s' at %s\n", ssid, ip.toString().c_str());
+  Serial.printf("[wifi] AP '%s' at %s\r\n", ssid, ip.toString().c_str());
   g_dns.start(53, "*", ip);
 }
 
@@ -283,7 +283,7 @@ void startTciClients() {
   g_sharedTci = isSharedTciConfig(g_cfg);
 
   if (g_sharedTci) {
-    Serial.printf("[tci] shared server mode -> %s:%u (BPF1=rig0, BPF2=rig1)\n",
+    Serial.printf("[tci] shared server mode -> %s:%u (BPF1=rig0, BPF2=rig1)\r\n",
                   g_cfg.radio1_host, g_cfg.radio1_port);
     g_radio1.set_host(g_cfg.radio1_host);
     g_radio1.set_port(g_cfg.radio1_port);
@@ -298,7 +298,7 @@ void startTciClients() {
   }
 
   // DUAL mode: two TCI clients, one per radio/filter.
-  Serial.printf("[tci] dual server mode\n");
+  Serial.printf("[tci] dual server mode\r\n");
   g_radio1.set_host(g_cfg.radio1_host);
   g_radio1.set_port(g_cfg.radio1_port);
   g_radio1.set_iaru_region(g_cfg.radio1_iaru);
@@ -308,7 +308,7 @@ void startTciClients() {
   g_radio1.attach_trx_event(onRadio1Trx);
   g_radio1.attach_tune_event(onRadio1Tune);
   g_radio1.connect();
-  Serial.printf("[R1] TCI connecting to %s:%u (IARU %u)\n",
+  Serial.printf("[R1] TCI connecting to %s:%u (IARU %u)\r\n",
                 g_cfg.radio1_host, g_cfg.radio1_port, g_cfg.radio1_iaru);
 
   g_radio2.set_host(g_cfg.radio2_host);
@@ -320,7 +320,7 @@ void startTciClients() {
   g_radio2.attach_trx_event(onRadio2Trx);
   g_radio2.attach_tune_event(onRadio2Tune);
   g_radio2.connect();
-  Serial.printf("[R2] TCI connecting to %s:%u (IARU %u)\n",
+  Serial.printf("[R2] TCI connecting to %s:%u (IARU %u)\r\n",
                 g_cfg.radio2_host, g_cfg.radio2_port, g_cfg.radio2_iaru);
 }
 
@@ -349,10 +349,10 @@ void startStaMode() {
   }
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[wifi] STA up, ip=%s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("[wifi] STA up, ip=%s\r\n", WiFi.localIP().toString().c_str());
     if (MDNS.begin(g_cfg.hostname)) {
       MDNS.addService("http", "tcp", 80);
-      Serial.printf("[mdns] http://%s.local/\n", g_cfg.hostname);
+      Serial.printf("[mdns] http://%s.local/\r\n", g_cfg.hostname);
     }
     startTciClients();
   } else {
