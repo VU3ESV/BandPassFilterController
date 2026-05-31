@@ -207,11 +207,21 @@ arduino-cli compile \
 - `WebSockets` is a transitive dep of TCI; `LiquidCrystal I2C`
   claims AVR‑only but works on ESP32 (Wire is portable — expect a
   harmless warning at compile time).
-- On OTA start the firmware forces both BPFs to bypass (`onTuneChange(0, true);`
-  `onTuneChange(1, true);`) so an in-flight ATU tune sweep can't
-  hot‑switch a filter section while the binary is being rewritten.
-  OTA defaults to no password — set `kOtaPassword` in
-  `ESP32_SO2R_TCI.ino` and reflash over USB once to enable.
+- On OTA start the firmware forces both BPFs to bypass
+  (`onTuneChange(0, true)` / `onTuneChange(1, true)`) so an in-flight
+  ATU tune sweep can't hot‑switch a filter section while the binary
+  is being rewritten, and disconnects both TCI clients so the
+  WebSocket reader tasks don't compete with `espota` for the Wi-Fi
+  stack.
+- OTA password is set by editing `kOtaPassword` near the top of
+  [ESP32_SO2R_TCI.ino](ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino); default is
+  empty. `--upload-field password=…` is mandatory either way
+  (arduino-cli prompts otherwise). Empty default = anyone on the
+  LAN can flash arbitrary firmware on UDP 3232 — fine for a trusted
+  hamshack, risky on a shared / guest network. Rotation **does not
+  need USB**: upload the new firmware authenticating with the OLD
+  password; the new password takes effect after reboot. USB is only
+  required if the current password is lost.
 
 ## Defaults / safety
 

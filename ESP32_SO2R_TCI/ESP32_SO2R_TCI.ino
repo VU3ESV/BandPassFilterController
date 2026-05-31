@@ -380,10 +380,22 @@ void startStaMode() {
 // slots were already at 94% before adding OTA).
 //
 // kOtaPassword is empty by default — the OTA service binds to the LAN
-// only, and for a hamshack network that's the typical security model.
-// Set a non-empty value here to require espota to authenticate; the
-// upload side then needs `--upload-field password=<your-password>` (or
-// the matching Arduino IDE prompt).
+// only, and for a trusted hamshack network that's a reasonable model.
+// WARNING: with an empty value, anyone who can reach the board on UDP
+// 3232 can replace the firmware with arbitrary code. Set a non-empty
+// value if you're on a guest VLAN / shared LAN / anything you don't
+// fully control.
+//
+// `--upload-field password=<value>` is mandatory on every OTA upload
+// regardless (arduino-cli prompts interactively otherwise and aborts
+// in non-interactive shells); pass an empty value to match the empty
+// default.
+//
+// Rotating the password does NOT need a USB cable: build with the new
+// kOtaPassword value, OTA-upload using the OLD password (the running
+// firmware still has the old one), and the new password takes effect
+// after the device reboots. USB is only required if you've lost the
+// current password and can't authenticate to OTA anymore.
 // =============================================================================
 
 constexpr const char* kOtaPassword = "";
