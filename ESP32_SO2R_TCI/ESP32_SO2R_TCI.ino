@@ -22,9 +22,11 @@
  * a separate firmware mode if needed later — see the MQTT reference at
  * .support/ESP32MQTTSwitchV2.ino).
  *
- * BCD encoding: Yaesu band data — 160m=1, 80m=2, 40m=3, 20m=5, 15m=7,
- * 10m=9. WARC (30/17/12), 60 m, 6 m and out-of-band drop to bypass
- * (all four BCD lines released HIGH on the affected bank).
+ * BCD encoding: standard Yaesu Table 5 — 160m=1, 80m=2, 40m=3, 30m=4,
+ * 20m=5, 17m=6, 15m=7, 12m=8, 10m=9, 6m=10. 60 m / out-of-band /
+ * disconnect drop to bypass (all four BCD lines released HIGH on the
+ * affected bank). Note: the 5B4AGN / Hamation BPFs only have sections
+ * for the six contest bands; on 30/17/12/6 m they'll bypass.
  *
  * Configuration is persisted in flash (EEPROM emulation) and editable
  * from a tiny on-device web portal — first boot raises a SoftAP named

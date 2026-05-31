@@ -52,16 +52,30 @@ de‑energised.
 
 ### Yaesu BCD codes used
 
+Standard Yaesu "Table 5" band‑select assignment — all 10 HF/6 m
+amateur bands get a unique code:
+
 ```
-Band   BCD (DCBA)
-160 m  0001 (1)
-80  m  0010 (2)
-40  m  0011 (3)
-20  m  0101 (5)
-15  m  0111 (7)
-10  m  1001 (9)
-WARC / 60 m / 6 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
+Band   BCD (DCBA)  decimal
+160 m  0001        1
+80  m  0010        2
+40  m  0011        3
+30  m  0100        4
+20  m  0101        5
+17  m  0110        6
+15  m  0111        7
+12  m  1000        8
+10  m  1001        9
+6   m  1010        10
+
+60 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
 ```
+
+Note: the 5B4AGN TXBPF and Hamation BandPasser II only have internal
+sections for the six contest bands (160/80/40/20/15/10 m). On
+30/17/12/6 m the standard code is still emitted on the BCD bus, but
+the BPF itself will bypass — its own decode table only recognises the
+six contest codes.
 
 ## Dependencies
 

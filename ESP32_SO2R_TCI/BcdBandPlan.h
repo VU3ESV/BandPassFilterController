@@ -1,22 +1,36 @@
 // BcdBandPlan.h — frequency → Yaesu band-data BCD code.
 //
+// Implements the standard Yaesu "Table 5" BCD band-select assignment:
+//
+//   Band  BCD (DCBA)  decimal
+//   160m  0001        1
+//   80m   0010        2
+//   40m   0011        3
+//   30m   0100        4
+//   20m   0101        5
+//   17m   0110        6
+//   15m   0111        7
+//   12m   1000        8
+//   10m   1001        9
+//   6m    1010        10
+//
+//   60m / out-of-band / disconnect: 0000  (all lines HIGH = bypass)
+//
 // Output convention (matches .support/ESP32MQTTSwitchV2.ino, minus the
-// inhibit line — the 8 relays on this carrier are fully consumed by the
-// two 4-bit BCD buses, leaving no relay for a separate inhibit signal):
+// inhibit line — the 8 relays on this carrier are fully consumed by
+// the two 4-bit BCD buses):
 //   * BCD lines are ACTIVE-LOW. A bit set in the band code = the
 //     corresponding GPIO is driven LOW (relay energised on this carrier).
 //   * At boot, every output is driven HIGH (= idle / relay OFF).
-//   * On WARC bands, 60 m, 6 m, out-of-band, disconnect, or parse failure
-//     the band code is **0**, which translates to all four BCD lines HIGH
-//     — the same state the BPF sees with no band data applied, i.e.
-//     bypass. Both filters auto-bypass when no band line is asserted.
+//   * On 60 m, OOB, disconnect or parse failure the band code is 0,
+//     which translates to all four BCD lines HIGH — the bypass state.
 //
-// Yaesu BCD band codes (standard):
-//   160m=1 (0001)  80m=2 (0010)  40m=3 (0011)
-//   20m=5  (0101)  15m=7 (0111)  10m=9 (1001)
-// The `inhibit` flag in BcdResult is retained as an internal status
-// signal (drives serial logging and the /status JSON) but no longer
-// corresponds to a GPIO.
+// Note for contest-BPF use: the 5B4AGN TXBPF and Hamation BandPasser II
+// only ship sections for the six contest bands (160/80/40/20/15/10).
+// On 30/17/12/6 m the filter will see a valid Yaesu code but no
+// matching internal section — it'll bypass (or follow whatever its own
+// table maps that code to). Use a downstream BCD switch / antenna
+// selector if you need 30/17/12/6 m switching.
 #ifndef BPF_BCD_BAND_PLAN_H
 #define BPF_BCD_BAND_PLAN_H
 
@@ -29,26 +43,34 @@ struct BcdResult {
   bool    inhibit;  // true = assert inhibit (BPF should bypass).
 };
 
-// Hz units. WARC / 6 m / 60 m / out-of-band → inhibit=true, code=0.
+// Hz units. 60 m and out-of-band → inhibit=true, code=0 (bypass).
 inline BcdResult bcdFor(long hz) {
-  if (hz >= 1800000L  && hz <= 2000000L)  return { 1, false };  // 160 m
-  if (hz >= 3500000L  && hz <= 4000000L)  return { 2, false };  // 80  m
-  if (hz >= 7000000L  && hz <= 7300000L)  return { 3, false };  // 40  m
-  if (hz >= 14000000L && hz <= 14350000L) return { 5, false };  // 20  m
-  if (hz >= 21000000L && hz <= 21450000L) return { 7, false };  // 15  m
-  if (hz >= 28000000L && hz <= 29700000L) return { 9, false };  // 10  m
-  return { 0, true };                                            // bypass
+  if (hz >= 1800000L  && hz <= 2000000L)  return { 1,  false };  // 160 m
+  if (hz >= 3500000L  && hz <= 4000000L)  return { 2,  false };  // 80  m
+  if (hz >= 7000000L  && hz <= 7300000L)  return { 3,  false };  // 40  m
+  if (hz >= 10100000L && hz <= 10150000L) return { 4,  false };  // 30  m
+  if (hz >= 14000000L && hz <= 14350000L) return { 5,  false };  // 20  m
+  if (hz >= 18068000L && hz <= 18168000L) return { 6,  false };  // 17  m
+  if (hz >= 21000000L && hz <= 21450000L) return { 7,  false };  // 15  m
+  if (hz >= 24890000L && hz <= 24990000L) return { 8,  false };  // 12  m
+  if (hz >= 28000000L && hz <= 29700000L) return { 9,  false };  // 10  m
+  if (hz >= 50000000L && hz <= 54000000L) return { 10, false };  // 6   m
+  return { 0, true };                                              // bypass
 }
 
 inline const char* bandName(uint8_t code, bool inhibit) {
   if (inhibit) return "bypass";
   switch (code) {
-    case 1: return "160m";
-    case 2: return "80m";
-    case 3: return "40m";
-    case 5: return "20m";
-    case 7: return "15m";
-    case 9: return "10m";
+    case 1:  return "160m";
+    case 2:  return "80m";
+    case 3:  return "40m";
+    case 4:  return "30m";
+    case 5:  return "20m";
+    case 6:  return "17m";
+    case 7:  return "15m";
+    case 8:  return "12m";
+    case 9:  return "10m";
+    case 10: return "6m";
   }
   return "?";
 }
@@ -72,7 +94,7 @@ inline void setupBank(const BcdBank& b) {
 }
 
 inline void driveBank(const BcdBank& b, BcdResult r) {
-  // r.code == 0 (WARC / OOB / disconnect) -> all lines HIGH = bypass.
+  // r.code == 0 (OOB / 60 m / disconnect) -> all lines HIGH = bypass.
   // r.inhibit is no longer wired anywhere; it just rides along for status.
   digitalWrite(b.pinA, (r.code & 0x1) ? LOW : HIGH);
   digitalWrite(b.pinB, (r.code & 0x2) ? LOW : HIGH);
