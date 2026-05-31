@@ -1,56 +1,105 @@
 # BandPassFilterController
 
-ESP12 (ESP8266) firmware that drives an HF contest band‑pass filter (BPF) by
-reading the operating frequency of an attached radio over the network.
+ESP32 firmware that drives **two** HF contest band‑pass filters at the
+same time by reading the operating frequency of one or two SDR radios
+over the network using the **TCI WebSocket** protocol. One ESP32 dev
+board with an 8‑relay carrier emits two independent Yaesu‑style 4‑bit
+BCD band‑data buses — one per BPF.
 
-Two filter models are targeted. Two delivery variants currently coexist in
-the repo:
+A single firmware variant lives in [ESP32_SO2R_TCI/](ESP32_SO2R_TCI/);
+the earlier ESP8266 single‑radio / Kenwood `IF;` sketches have been
+removed.
 
-**A — single‑board, ESP8266, Kenwood `IF;` over TCP (the original):**
+## Target filters
 
-- **5B4AGN TXBPF** — high‑power contest filter discussed at
-  <https://groups.io/g/TXBPF>. Six switched filter sections (160/80/40/20/15/10 m)
-  with internal relays. Code lives in [5B4AGN/](5B4AGN/).
-- **Hamation MBF‑100 BandPasser II** — six‑band contest BPF documented at
-  <https://www.hamation.com/Bandpasser.html>. Each band is engaged by applying
-  +5–12 V to a rear‑panel control pin; with no input it falls back to bypass.
-  Code lives in [Hamation/](Hamation/).
+- **5B4AGN TXBPF** — high‑power contest filter, six switched sections
+  (160/80/40/20/15/10 m); discussed at <https://groups.io/g/TXBPF>.
+- **Hamation MBF‑100 BandPasser II** — six‑band contest BPF documented
+  at <https://www.hamation.com/Bandpasser.html>. Each band is engaged
+  by applying +5–12 V on a rear‑panel control pin; with no input it
+  falls back to its built‑in bypass relay. **Important quirk**:
+  Hamation's decoder reads BCD `0000` as **160 m**, not bypass — so
+  the firmware never emits `0000` for inhibit. See "Bypass policy"
+  below.
 
-Each ESP‑12F talks to one radio over Kenwood `IF;` CAT (Thetis, Node‑Red
-bridge, hamlib `rigctld`). One controller per filter, one filter per radio.
-1‑of‑6 relay outputs, active‑HIGH on the LC Tech `ESP12F_Relay_X8` carrier.
+Either filter can be on either bank; the firmware doesn't care.
 
-**B — single ESP32, **two** TCI WebSocket radios, **two** BCD outputs:**
+## Radio support
 
-- **[ESP32_SO2R_TCI/](ESP32_SO2R_TCI/)** — one ESP32 dev board carries two
-  simultaneous TCI client connections (one per radio) and emits two
-  independent Yaesu‑style 4‑bit BCD band‑data buses plus inhibit lines.
-  Drives a 5B4AGN and a Hamation **at the same time**, one per radio.
-  Active‑LOW outputs on the same 8‑relay carrier (different wiring than
-  variant A). Derived from
-  [`.support/ESP32MQTTSwitchV2.ino`](.support/ESP32MQTTSwitchV2.ino) with
-  MQTT swapped for TCI via the
-  [IW7DMH TCI library](https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/)
-  (bundled at [.support/TCI-2/](.support/TCI-2/)).
+- **TCI WebSocket** — native protocol for SunSDR / Expert Electronics
+  (ExpertSDR3 default port `50001`). Two operating modes, picked
+  automatically from the saved config:
 
-## Objectives
+  | Mode | Trigger | Behaviour |
+  | --- | --- | --- |
+  | **DUAL**   | Radio 1 and Radio 2 have different `host:port` pairs | Two TCI clients opened; each filter follows its own radio's RX‑1 VFO A. |
+  | **SHARED** | Radio 1 and Radio 2 share the same `host:port` | One TCI client; `rig=0` events drive BPF 1, `rig=1` events drive BPF 2. Use this when a dual‑receiver radio (e.g. SunSDR2 PRO) feeds both filters. |
 
-1. **Read radio frequency over the network.** Each ESP12 connects to a TCP
-   endpoint that exposes the radio (Kenwood/Thetis `IF;` CAT over TCP today,
-   TCI WebSocket bridged via Node‑Red / rigctld; see
-   [docs/RADIO_PROTOCOLS.md](docs/RADIO_PROTOCOLS.md)).
-2. **Map frequency → contest band.** Only the six contest bands (160/80/40/20/15/10 m)
-   engage a filter section. WARC bands (30/17/12 m), 60 m, 6 m, and out‑of‑band
-   readings drop the controller into **bypass** (all band outputs de‑asserted).
-3. **One controller per filter, one filter per radio, fully swappable.** The
-   association between radio and filter is just configuration (IP + port +
-   protocol). Swapping radios is a web‑UI change, no recompile.
-4. **Configurable in the field.** The ESP12 hosts a web portal for SSID, radio
-   endpoint, protocol, and hostname. Config persists in EEPROM. First boot (or
-   reset hold) starts a SoftAP captive portal.
-5. **Safe defaults.** All outputs LOW on boot, on disconnect, and on parse
-   failure — both filters interpret "no input" as bypass, which keeps RF
-   flowing without damaging a filter section.
+- Tested against SunSDR2 PRO, ExpertSDR3, and AetherSDR. The
+  ExpertSDR3 / SunSDR2 PRO TCI server emits the full event stream
+  (vfo, modulation, trx, tune). AetherSDR's TCI implementation does
+  not forward tune state, so its bank uses the manual bypass path
+  (see below).
+
+The bundled TCI library at [.support/TCI-2/](.support/TCI-2/) is
+[IW7DMH's v1.0.1](https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/);
+the canonical compiled copy now lives next to the sketch
+([ESP32_SO2R_TCI/TCI.h](ESP32_SO2R_TCI/TCI.h),
+[ESP32_SO2R_TCI/TCI.cpp](ESP32_SO2R_TCI/TCI.cpp),
+[ESP32_SO2R_TCI/RTX.h](ESP32_SO2R_TCI/RTX.h),
+[ESP32_SO2R_TCI/RTX.cpp](ESP32_SO2R_TCI/RTX.cpp))
+with two local patches: quoted `RTX.h` include for in‑sketch
+compilation, and `Unhandled message!` Serial.printf gated behind
+`TCI_LOG_UNHANDLED` (default 0). A separate `[TCI raw tune-like]`
+diagnostic tap surfaces any incoming TCI frame containing the
+substring "tune" — quiet way to confirm a new server's tune
+behaviour.
+
+## BCD band plan — full Yaesu Table 5
+
+| Band | BCD (DCBA) | dec |
+| --- | --- | --- |
+| 160 m | 0001 | 1 |
+| 80 m | 0010 | 2 |
+| 40 m | 0011 | 3 |
+| 30 m | 0100 | 4 |
+| 20 m | 0101 | 5 |
+| 17 m | 0110 | 6 |
+| 15 m | 0111 | 7 |
+| 12 m | 1000 | 8 |
+| 10 m | 1001 | 9 |
+| 6 m  | 1010 | 10 |
+
+60 m / OOB / disconnect / tune emit a **nearest‑WARC** bypass code
+(see below), never `0000`.
+
+## Bypass policy
+
+The firmware forces bypass on a bank in any of these states:
+
+- The radio's **TUNE** button is engaged (TCI `tune:RIG,true;`).
+- Manual bypass requested via web (`POST /bypass?bpf=N&on=1`) or
+  serial (`bypassN on`) — used when the TCI server doesn't emit tune
+  events (AetherSDR).
+- The TCI link drops or WiFi disconnects.
+- The decoded frequency is on 60 m or out‑of‑band.
+
+In any of those cases, instead of `0000` the bank emits the
+**nearest WARC code** to the last known frequency:
+
+| Last freq | Bypass code |
+| --- | --- |
+| < 14 MHz   | 30 m → 0100 (4) |
+| 14–21 MHz  | 17 m → 0110 (6) |
+| > 21 MHz   | 12 m → 1000 (8) |
+| Unknown    | 30 m → 0100 (4) |
+
+Rationale: the Hamation decodes `0000` as 160 m, exactly the opposite
+of bypass and dangerous if the ATU is sweeping at high power on a
+different band. A WARC code triggers Hamation's built‑in bypass relay
+(no matching section). 5B4AGN behaves the same way on unrecognised
+codes — all section relays released = bypass. Single safe policy for
+both filters.
 
 ## Layout
 
@@ -58,56 +107,126 @@ bridge, hamlib `rigctld`). One controller per filter, one filter per radio.
 .
 ├── CLAUDE.md                     ← this file
 ├── README.md                     ← public README
-├── docs/
-│   ├── ARCHITECTURE.md           ← firmware module layout, runtime model
-│   ├── HARDWARE.md               ← pinout, relay board, level shifting
-│   ├── CONFIGURATION.md          ← web portal, EEPROM layout, factory reset
-│   └── RADIO_PROTOCOLS.md        ← Kenwood IF;, TCI, bridging notes
-├── 5B4AGN/                       ← Arduino sketch for 5B4AGN TXBPF
-│   ├── 5B4AGN.ino
-│   ├── Config.h
-│   ├── BandPlan.h
-│   ├── RadioInterface.h
-│   └── WebPortal.h
-├── Hamation/                     ← Arduino sketch for Hamation BandPasser II
-│   ├── Hamation.ino
-│   ├── Config.h
-│   ├── BandPlan.h
-│   ├── RadioInterface.h
-│   └── WebPortal.h
+├── docs/                         ← legacy notes from the ESP8266 era;
+│   ├── ARCHITECTURE.md             not authoritative for the current
+│   ├── HARDWARE.md                 ESP32 firmware. Treat as reference
+│   ├── CONFIGURATION.md            material until rewritten.
+│   └── RADIO_PROTOCOLS.md
+├── ESP32_SO2R_TCI/               ← the firmware
+│   ├── ESP32_SO2R_TCI.ino        ← main sketch (TCI handlers, wiring,
+│   │                               failsafe, manual bypass plumbing)
+│   ├── Config.h                  ← EEPROM schema, magic, CRC32
+│   ├── BcdBandPlan.h             ← Yaesu Table 5 + nearest-WARC bypass
+│   ├── WebPortal.h               ← /, /save, /status, /bypass, /reboot
+│   ├── LcdDisplay.h              ← 16x2 I2C LCD, link indicator, delta
+│   │                               redraw at 150 ms / 400 kHz I2C
+│   ├── TCI.h / TCI.cpp           ← bundled IW7DMH TCI client
+│   ├── RTX.h / RTX.cpp             (locally patched — see notes above)
+│   └── README.md
 └── .support/
-    └── ESP12TCPClientV6.ino      ← original reference sketch (pins, IF; flow)
+    ├── ESP12TCPClientV6.ino      ← original ESP8266 reference sketch
+    ├── ESP32MQTTSwitchV2.ino     ← reference for BCD pin map +
+    │                               FreeRTOS LCD pattern (BPF1 pins
+    │                               kept identical so existing wiring
+    │                               carries over)
+    └── TCI-2/                    ← upstream TCI library snapshot
 ```
 
-Both sketches share the same module shape; the differences are cosmetic
-(default hostname, on‑screen label) plus the comments documenting how each
-filter interprets the 6 band‑select outputs. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the rationale behind keeping
-them as two self‑contained sketches rather than a shared library.
+## Hardware
 
-## Build & flash (quick)
+- One **ESP32 dev board** (generic profile works).
+- One **8‑relay carrier**, **active‑LOW** inputs (HIGH = relay
+  de‑energised). All 8 relays consumed: 4 per BPF for the BCD bus.
+  No inhibit line — bypass is "all 4 lines HIGH" on the affected
+  bank (or the WARC override above).
+- Pin map (BPF 1 matches `.support/ESP32MQTTSwitchV2.ino` so existing
+  5B4AGN wiring is preserved):
 
-- Arduino IDE → install **ESP8266** board package (3.1.x).
-- Tools → Board → *Generic ESP8266 Module* or *NodeMCU 1.0*.
-- Open `5B4AGN/5B4AGN.ino` (or `Hamation/Hamation.ino`) and upload.
-- First boot: ESP12 raises `BPF-Setup-XXXX` SoftAP; join it, browse to
-  `http://192.168.4.1/`, set WiFi + radio endpoint, save, reboot.
+  | Function | BPF 1 GPIO | BPF 2 GPIO |
+  | --- | --- | --- |
+  | BCD A | 16 | 33 |
+  | BCD B | 17 | 32 |
+  | BCD C | 18 | 27 |
+  | BCD D | 19 | 26 |
 
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for details and the
-factory‑reset procedure.
+- Optional **16×2 I²C LCD** (PCF8574 backpack at `0x27`, override in
+  `setup()` if `0x3F`). SDA = GPIO 21, SCL = GPIO 22. Layout:
 
-## Reference implementation
+  ```
+  col:    0123456789012345
+  row 0:  ' 14.2500 USB RX'   ← BPF 1
+  row 1:  '* 7.1000 LSB TU'   ← BPF 2: link DOWN ('*') OR tune engaged ('TU')
+  ```
 
-`.support/ESP12TCPClientV6.ino` is the original sketch this project is derived
-from. It establishes the GPIO usage for the LC Technology `ESP12F_Relay_X8`
-8‑relay carrier and the Kenwood `IF;` TCP polling pattern. Two things the new
-firmware corrects:
+  Col 0: `' '` = TCI up, `'*'` = TCI/WiFi down → forced bypass.
+  Last column shows `TU` while tune (radio or manual) is engaged,
+  `TX`/`RX` otherwise, `--` when the link is down.
 
-1. Its band mapping bundles 30 m with 40 m and 17 m with 20 m — wrong for a
-   contest BPF where WARC bands must route to bypass.
-2. Its `Relay1..Relay8` macros are numbered **reverse** of the board's
-   silkscreen (the reference's `Relay1 = GPIO5` is *Relay 8* on the PCB).
-   The new firmware uses the silkscreen labels and deliberately skips
-   Relays 1 (GPIO16) and 6 (GPIO0) because both pulse ON briefly at every
-   power‑up. See [docs/HARDWARE.md](docs/HARDWARE.md) for the full pin
-   table and sources.
+## Configure
+
+First boot: ESP32 raises `BPF-Setup-XXXXXX` SoftAP (XXXXXX = lower 24
+bits of eFuse MAC). Join, browse `http://192.168.4.1/`, fill WiFi +
+both radio endpoints + hostname (`SO2R-BPF` by default), save, reboot.
+On station WiFi the portal is reachable at `http://<hostname>.local/`
+(mDNS) or the DHCP‑assigned IP printed on serial at 115200. The
+ESP32 re‑applies its hostname on `ARDUINO_EVENT_WIFI_STA_START` so
+routers / IP scanners see `SO2R-BPF`, not the default `esp32-<mac>`.
+
+Config persists to a 384‑byte EEPROM page (magic `0xBF50C0DE`,
+version 2, CRC32). On magic/version/CRC mismatch the controller drops
+back to AP‑portal mode.
+
+Web routes:
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/` | GET | HTML config form + manual‑bypass buttons |
+| `/save` | POST | Persist form, return "Saved" |
+| `/status` | GET | JSON: mode / wifi / R1+R2 connected, last band, tuning |
+| `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force‑bypass |
+| `/reboot` | POST | Soft reboot |
+| `/factory_reset` | POST | Zero EEPROM (`confirm=YES` required) |
+
+Serial commands at 115200: `status`, `reset`,
+`bypass{1,2} {on,off}`.
+
+## Build & flash
+
+```bash
+arduino-cli core install esp32:esp32
+arduino-cli lib install WebSockets "LiquidCrystal I2C"
+arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+  --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
+```
+
+`UploadSpeed=115200` works around CH340 noise at the 921600 default.
+`WebSockets` is a transitive dep of TCI; `LiquidCrystal I2C` claims
+AVR‑only but works on ESP32 (Wire is portable — expect a harmless
+warning at compile time).
+
+## Defaults / safety
+
+- All outputs HIGH on boot (= bank de‑energised on the active‑LOW
+  carrier) before WiFi starts.
+- On WiFi drop, TCI drop, parse failure, or boot before first VFO
+  event: bank is forced to bypass via WARC code. Filter sees either
+  its built‑in bypass (Hamation) or all‑sections‑released (5B4AGN).
+- On radio TUNE engaged: bank flips to bypass for the duration; the
+  cached last‑known frequency is reused on release to restore the
+  live band.
+- Manual bypass (web/serial) latches the same flag a TCI tune event
+  would; the LCD shows `TU` so a forgotten engagement is visible.
+
+## Reference implementations
+
+- [`.support/ESP12TCPClientV6.ino`](.support/ESP12TCPClientV6.ino) —
+  original ESP8266 reference sketch, source of the LC Technology
+  `ESP12F_Relay_X8` pin map and Kenwood `IF;` polling pattern. Not
+  used directly by the current firmware.
+- [`.support/ESP32MQTTSwitchV2.ino`](.support/ESP32MQTTSwitchV2.ino)
+  — MQTT‑driven ESP32 reference; the BPF 1 BCD pin map
+  (16/17/18/19) and the FreeRTOS LCD task pattern come from here.
+  Differences vs the current firmware: MQTT replaced with TCI;
+  inhibit lines dropped (all 8 relays consumed by two BCD banks);
+  shared‑server mode added; tune auto‑bypass and the WARC bypass
+  policy are new.
