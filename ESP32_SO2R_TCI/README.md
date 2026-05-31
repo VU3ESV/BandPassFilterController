@@ -75,12 +75,46 @@ arduino-cli lib install WebSockets
 
 ## Configure
 
-Open [`ESP32_SO2R_TCI.ino`](ESP32_SO2R_TCI.ino) and edit the constants at the
-top of the file:
+**Two ways** — pick whichever you prefer.
 
-- `kWifiSsid` / `kWifiPass` — your station WiFi.
-- `kRadio1Host` / `kRadio1Port` / `kRadio1Iaru` — TCI endpoint for Radio 1.
-- `kRadio2Host` / `kRadio2Port` / `kRadio2Iaru` — TCI endpoint for Radio 2.
+### Option A: web portal (recommended)
+
+Identical UX to the ESP8266 sketches' portal but with **two** radio
+sections.
+
+1. On first boot (or after a factory reset), the controller raises a
+   SoftAP named `BPF-Setup-XXXXXX` (`XXXXXX` = lower 24 bits of the ESP32
+   eFuse MAC). Join it from a phone / laptop.
+2. Browse to `http://192.168.4.1/`.
+3. Fill in: WiFi SSID + password, hostname, Radio 1 (host/port/IARU
+   region), Radio 2 (host/port/IARU region). Save → reboot.
+4. Once on station WiFi, the portal is reachable at
+   `http://<hostname>.local/` (mDNS) or the DHCP-assigned IP printed to
+   serial at 115200.
+
+Routes:
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/` | GET | HTML form |
+| `/save` | POST | URL-encoded form, writes EEPROM, returns "Saved" |
+| `/status` | GET | JSON: filter / WiFi / R1 + R2 connected + last band / uptime |
+| `/reboot` | POST | Soft reboot |
+| `/factory_reset` | POST | Zero EEPROM (requires `confirm=YES`) |
+
+Config is persisted to flash (EEPROM emulation, 384-byte page with magic
+`0xBF50C0DE`, version 2, CRC32-checksummed). On magic / version / CRC
+mismatch the controller drops back to AP-portal mode.
+
+### Option B: hardcoded defaults
+
+If you'd rather skip the portal entirely, edit `defaults()` in
+[Config.h](Config.h) to set the values you want and let the firmware
+fall back to them when the EEPROM is blank. Defaults today:
+
+- Hostname: `bpf-so2r`
+- Radio 1: `192.168.1.20:50001`, IARU region 1
+- Radio 2: `192.168.1.21:50001`, IARU region 1
 
 Default TCI port for ExpertSDR3 / SunSDR is **50001**. IARU region 1 / 2 / 3
 sets the band edges (default 1 = Europe/Africa).
@@ -113,12 +147,11 @@ BandPassFilterController :: ESP32 SO2R / TCI
 If either WiFi or a TCI link drops, the affected bank is forced to
 INHIBIT (bypass) until the link comes back.
 
-## What's not in the first cut
+## What's not in this build
 
-- **No web portal / EEPROM config.** The existing ESP8266 sketches have
-  one; if needed, port `WebPortal.h` + `Config.h` from `../5B4AGN/`.
 - **No LCD.** The reference MQTT sketch drives a 16×2 I²C LCD; left out
-  here to keep the first cut small.
+  here to keep the build small. Trivial to add back via the
+  `LiquidCrystal_I2C` library.
 - **No SO2R swap mode.** Each BPF is dedicated to one radio. Add a
   build‑time `#define BPF_SO2R_SWAP` and read each TCI's `getTrx()` /
   `getTxEnable()` state if you want the reference's
