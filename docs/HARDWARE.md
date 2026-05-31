@@ -163,6 +163,28 @@ itself can only update app slots, not the table — so the partition
 choice has to be locked in over USB once before subsequent OTA flashes
 take over.
 
+### OTA password
+
+`--upload-field password=` is required on every OTA upload, even
+when the device is configured with no password — `arduino-cli`
+prompts interactively otherwise and aborts in non-interactive shells:
+
+```bash
+# Empty default (kOtaPassword = ""):
+arduino-cli upload ... --port <ip> --upload-field password= ...
+# After setting kOtaPassword = "secret":
+arduino-cli upload ... --port <ip> --upload-field password=secret ...
+```
+
+The default is empty. **On a LAN you don't fully trust, set a
+password** — anyone who can reach the board on UDP 3232 can replace
+the firmware with arbitrary code. Set the value in `kOtaPassword`
+near the top of [`../ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino`](../ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino),
+recompile, and upload using the **current** (= old) password — the
+new one takes effect after the device reboots. USB reflash is only
+needed if you've forgotten the current password and can't authenticate
+to OTA.
+
 ### macOS USB‑serial caveats (verified 2026‑05)
 
 - **CH340 / CH341 clones**: install the WCH driver from

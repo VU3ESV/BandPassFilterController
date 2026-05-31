@@ -243,11 +243,49 @@ filter section while the binary is being rewritten:
 [ota] update complete, rebooting
 ```
 
-OTA defaults to **no password** — the service binds to the LAN and
-for a hamshack network that's the typical security model. To require
-a password, edit `kOtaPassword` near the top of
-`ESP32_SO2R_TCI.ino` and reflash via USB once; subsequent OTA uploads
-then need `--upload-field password=<your-password>`.
+### OTA password
+
+OTA defaults to **no password** (`kOtaPassword = ""` near the top of
+[ESP32_SO2R_TCI.ino](ESP32_SO2R_TCI.ino)). The service binds to the
+LAN, not the public internet, so on a trusted hamshack network this
+is a reasonable default.
+
+> **Security caveat — read before deploying on a shared LAN.** With
+> the empty default, *anyone who can reach the board's IP on UDP
+> 3232 can replace the firmware with arbitrary code.* On a guest
+> Wi-Fi VLAN, contest-site shared network, or any LAN you don't
+> fully control, you should set a password.
+
+`--upload-field password=` is mandatory either way — `arduino-cli`
+asks for it interactively otherwise and aborts in non-interactive
+shells. With the empty default, pass an empty value:
+
+```bash
+arduino-cli upload ... --port <ip> --upload-field password= ESP32_SO2R_TCI
+```
+
+The password is **only checked by the device** and travels over the
+LAN as an MD5 challenge–response, not in plaintext.
+
+#### Changing the password
+
+Editing `kOtaPassword` and rebuilding is the only way to change it —
+there's no portal field on purpose, to keep the secret out of the
+HTML form and out of `/config` JSON. To rotate or enable a password,
+upload the new firmware **using the OLD value** for that single
+upload; the new value takes effect after the reboot.
+
+| Going from → to | `--upload-field` to use *for this one upload* |
+| --- | --- |
+| empty → set | `--upload-field password=` (empty — matches the currently-running firmware) |
+| oldval → newval | `--upload-field password=oldval` |
+| set → empty | `--upload-field password=oldval` |
+
+After reboot, all future OTAs need the new value.
+
+You only need USB if you've **lost or forgotten** the current
+password — at that point OTA can't authenticate and a USB reflash is
+the only way back in.
 
 ## Status / debug
 
