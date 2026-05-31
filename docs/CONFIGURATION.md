@@ -42,9 +42,13 @@ Served by the on‑device `WebServer` on port 80.
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/` | GET | HTML form, prefilled with current config + manual‑bypass buttons. |
+| `/` | GET | HTML form, prefilled with current config + manual‑bypass buttons + backup/restore. |
 | `/save` | POST | URL‑encoded form. Updates the struct, writes EEPROM, returns "Saved". |
-| `/status` | GET | JSON: filter / mode / wifi / R1+R2 connected, last band, tuning, uptime. |
+| `/status` | GET | JSON: filter / mode / wifi / R1+R2 connected, last band, tuning, sensors, history, uptime. |
+| `/config` | GET | JSON: stored config (Wi-Fi password omitted) with `Content-Disposition` for download. |
+| `/discover` | GET | JSON: device identity (vendor, product, version, build, hostname, IP, ports, endpoint paths). Companion to the `_bpf-so2r._tcp` mDNS service — see [Discovery](#discovery) below. |
+| `/history` | POST | `clear=YES` → wipe the band-change ring buffer in RAM. |
+| `/live` | GET | Standalone WebSocket-driven live status page (subscribes to port 81). |
 | `/bypass` | POST | `bpf=1\|2&on=0\|1`. Latches manual bypass on the named BPF (same effect as a TCI tune event). |
 | `/reboot` | POST | Soft reboot via `ESP.restart()`. |
 | `/factory_reset` | POST | Zeroes EEPROM (`confirm=YES` required); next boot lands in portal. |
@@ -91,6 +95,75 @@ holding that BPF in bypass — either because the TCI server emitted
 | --- | --- |
 | STA mode (steady state) | `http://<hostname>.local/` via mDNS, e.g. `http://SO2R-BPF.local/`. Or the DHCP‑assigned IP printed on serial at 115200. |
 | AP / portal mode | Open AP named `BPF-Setup-XXXXXX` (lower 24 bits of the eFuse MAC). Portal at `http://192.168.4.1/`. |
+
+## Discovery
+
+Two complementary mechanisms for letting a client app / shack PC
+find every BPF controller on the LAN automatically:
+
+### mDNS service (preferred)
+
+Once on station Wi-Fi the device advertises a custom service
+`_bpf-so2r._tcp.local.` on port 80, alongside the standard
+`_http._tcp` registration. Any zeroconf-aware client can enumerate
+controllers without hard-coding hostnames.
+
+TXT records (identification only — for *state*, fetch `/discover` or
+`/status`, which are cheap and live):
+
+| Key | Example | Notes |
+| --- | --- | --- |
+| `vendor`  | `VU3ESV`                    | Project owner |
+| `product` | `BandPassFilterController`  | Project name |
+| `version` | `0.5.0`                     | Firmware version |
+| `build`   | `Jan  1 2026 12:34:56`      | Build timestamp |
+| `host`    | `SO2R-BPF`                  | Configured hostname |
+| `bpf`     | `2`                         | Number of BPFs |
+| `path`    | `/discover`                 | HTTP path to fetch metadata |
+| `ws_live` | `81`                        | Live WebSocket port |
+
+Browse from the shell:
+
+```bash
+# macOS
+dns-sd -B _bpf-so2r._tcp local.
+dns-sd -L SO2R-BPF _bpf-so2r._tcp local.   # detail one entry
+# Linux
+avahi-browse -r _bpf-so2r._tcp
+```
+
+From code: Apple Bonjour, Java JmDNS, Python `zeroconf`, Go `mdns`
+all browse the same service type the same way.
+
+### `GET /discover` (HTTP)
+
+After mDNS has found a candidate — or any time the client already
+has the IP (manual entry, DHCP-leases page, etc.) — `GET /discover`
+returns a small, static, machine-readable identity record:
+
+```json
+{
+  "service": "bpf-so2r",
+  "vendor":  "VU3ESV",
+  "product": "BandPassFilterController",
+  "version": "0.5.0",
+  "build":   "Jan  1 2026 12:34:56",
+  "hostname": "SO2R-BPF",
+  "ip":       "192.168.86.39",
+  "bpf_count": 2,
+  "ports":     { "http": 80, "ws_live": 81, "ota": 3232 },
+  "endpoints": {
+    "portal": "/", "status": "/status", "config": "/config",
+    "discover": "/discover", "live": "/live", "bypass": "/bypass",
+    "history_clear": "/history?clear=YES"
+  }
+}
+```
+
+No live state — for that the client calls `/status` (or opens the
+WebSocket on the advertised `ws_live` port). Keeping `/discover`
+static and cheap means a discovery sweep across many devices is
+fast and cacheable.
 
 The ESP32 re‑applies `WiFi.setHostname()` inside an
 `ARDUINO_EVENT_WIFI_STA_START` event handler so DHCP DISCOVER carries

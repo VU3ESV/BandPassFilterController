@@ -165,6 +165,16 @@ On station WiFi the portal is reachable at `http://<hostname>.local/`
 ESP32 re‑applies its hostname on `ARDUINO_EVENT_WIFI_STA_START` so
 routers / IP scanners see `SO2R-BPF`, not the default `esp32-<mac>`.
 
+Discovery: the device advertises a custom mDNS service
+`_bpf-so2r._tcp.local.` on port 80 with TXT records `vendor`,
+`product`, `version`, `build`, `host`, `bpf`, `path=/discover`,
+`ws_live=81`. Clients enumerate every BPF controller on the LAN with
+e.g. `dns-sd -B _bpf-so2r._tcp local.` (macOS) /
+`avahi-browse -r _bpf-so2r._tcp` (Linux), then call `GET /discover`
+on each to confirm identity. `/discover` returns the same metadata
+as JSON plus the IP, port map, and endpoint paths — small and stable
+so a multi-device sweep is cheap.
+
 Config persists to a 384‑byte EEPROM page (magic `0xBF50C0DE`,
 version 2, CRC32). On magic/version/CRC mismatch the controller drops
 back to AP‑portal mode.
@@ -173,9 +183,13 @@ Web routes:
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/` | GET | HTML config form + manual‑bypass buttons |
+| `/` | GET | HTML config form + manual‑bypass buttons + backup/restore |
 | `/save` | POST | Persist form, return "Saved" |
-| `/status` | GET | JSON: mode / wifi / R1+R2 connected, last band, tuning |
+| `/status` | GET | JSON: mode / wifi / R1+R2 connected, last band, tuning, sensors, history |
+| `/config` | GET | JSON: stored config (no Wi-Fi password) for backup download |
+| `/discover` | GET | JSON: device identity + port map + endpoint paths |
+| `/history` | POST | `clear=YES` wipes the band-change ring buffer |
+| `/live` | GET | Standalone WebSocket-driven live status page |
 | `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force‑bypass |
 | `/reboot` | POST | Soft reboot |
 | `/factory_reset` | POST | Zero EEPROM (`confirm=YES` required) |
