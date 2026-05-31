@@ -1,5 +1,6 @@
 // WebPortal.h — minimal config UI for the ESP32 SO2R/TCI controller.
-// Routes: GET /, POST /save, GET /status, POST /reboot, POST /factory_reset.
+// Routes: GET /, POST /save, GET /status, GET /config, POST /reboot,
+//         POST /factory_reset.
 //
 // Mirrors the ESP8266 sketches' WebPortal.h but uses the ESP32 Arduino core
 // (WebServer.h instead of ESP8266WebServer.h) and the 2-radio Config schema
@@ -30,6 +31,7 @@ public:
     server_.on("/",              HTTP_GET,  [this]() { handleRoot(); });
     server_.on("/save",          HTTP_POST, [this]() { handleSave(); });
     server_.on("/status",        HTTP_GET,  [this]() { handleStatus(); });
+    server_.on("/config",        HTTP_GET,  [this]() { handleConfig(); });
     server_.on("/bypass",        HTTP_POST, [this]() { handleBypass(); });
     server_.on("/reboot",        HTTP_POST, [this]() { handleReboot(); });
     server_.on("/factory_reset", HTTP_POST, [this]() { handleFactoryReset(); });
@@ -54,6 +56,29 @@ private:
         case '>': o += "&gt;";   break;
         case '"': o += "&quot;"; break;
         default:  o += *s;
+      }
+    }
+    return o;
+  }
+
+  // Escape a C string for embedding inside a JSON string literal.
+  static String jsonEsc(const char* s) {
+    String o;
+    for (; *s; ++s) {
+      switch (*s) {
+        case '"':  o += "\\\""; break;
+        case '\\': o += "\\\\"; break;
+        case '\n': o += "\\n";  break;
+        case '\r': o += "\\r";  break;
+        case '\t': o += "\\t";  break;
+        default:
+          if ((unsigned char)*s < 0x20) {
+            char buf[7];
+            snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)*s);
+            o += buf;
+          } else {
+            o += *s;
+          }
       }
     }
     return o;
@@ -165,7 +190,8 @@ private:
            "onsubmit=\"return confirm('Wipe all config and reboot?');\">"
            "<input type='hidden' name='confirm' value='YES'>"
            "<button class='warn'>Factory reset</button></form>"
-           "<p><a href='/status'>/status JSON</a></p></body></html>");
+           "<p><a href='/status'>/status JSON</a> &middot; "
+           "<a href='/config'>/config JSON</a></p></body></html>");
     server_.send(200, "text/html", h);
   }
 
@@ -204,6 +230,27 @@ private:
 
   void handleStatus() {
     server_.send(200, "application/json", statusJson_ ? statusJson_() : String("{}"));
+  }
+
+  // GET /config — the stored configuration as JSON, serialized straight from
+  // the same live cfg_ struct the HTML form renders, so the two can never
+  // drift. The companion app reads this to populate its Settings draft.
+  // The Wi-Fi password is intentionally omitted: it is never needed to
+  // re-display config, and the app's "leave blank to keep current" model
+  // means it should not round-trip the secret over the LAN.
+  void handleConfig() {
+    String j;
+    j.reserve(360);
+    j += F("{\"ssid\":\"");        j += jsonEsc(cfg_->wifi_ssid);
+    j += F("\",\"hostname\":\"");  j += jsonEsc(cfg_->hostname);
+    j += F("\",\"r1\":{\"host\":\""); j += jsonEsc(cfg_->radio1_host);
+    j += F("\",\"port\":");        j += String(cfg_->radio1_port);
+    j += F(",\"iaru\":");          j += String(cfg_->radio1_iaru);
+    j += F("},\"r2\":{\"host\":\"");  j += jsonEsc(cfg_->radio2_host);
+    j += F("\",\"port\":");        j += String(cfg_->radio2_port);
+    j += F(",\"iaru\":");          j += String(cfg_->radio2_iaru);
+    j += F("}}");
+    server_.send(200, "application/json", j);
   }
 
   void handleBypass() {
