@@ -77,6 +77,12 @@ volatile bool    g_lastInh1  = true;
 volatile bool    g_lastInh2  = true;
 volatile bool    g_lastLink1 = false;
 volatile bool    g_lastLink2 = false;
+// Force-bypass flags: true while the radio's TUNE button is engaged.
+// Contest BPFs are narrow-band; a wide ATU tuning sweep can push the
+// filter section into VSWR limits, so we drop to bypass for the
+// duration of the tune cycle.
+volatile bool    g_tune1     = false;
+volatile bool    g_tune2     = false;
 
 // =============================================================================
 // Status JSON for /status.
@@ -97,10 +103,12 @@ String statusJson() {
   j += "\"rssi\":";     j += WiFi.RSSI();                                    j += ",";
   j += "\"r1\":{\"connected\":"; j += (r1up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq1;
-  j += ",\"band\":\"";           j += bandName(g_lastBand1, g_lastInh1);     j += "\"},";
+  j += ",\"band\":\"";           j += bandName(g_lastBand1, g_lastInh1);     j += "\"";
+  j += ",\"tuning\":";           j += (g_tune1 ? "true" : "false");           j += "},";
   j += "\"r2\":{\"connected\":"; j += (r2up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq2;
-  j += ",\"band\":\"";           j += bandName(g_lastBand2, g_lastInh2);     j += "\"},";
+  j += ",\"band\":\"";           j += bandName(g_lastBand2, g_lastInh2);     j += "\"";
+  j += ",\"tuning\":";           j += (g_tune2 ? "true" : "false");           j += "},";
   j += "\"uptime_s\":";          j += (millis() / 1000);
   j += "}";
   return j;
@@ -111,22 +119,36 @@ String statusJson() {
 // =============================================================================
 
 void applyBand(int radioIndex, long hz) {
-  BcdResult r = bcdFor(hz);
+  // While TUNE is engaged on this radio, override the decoded band with
+  // a forced bypass (code 0). bcdFor() is still consulted so that when
+  // tune releases, the next applyBand() call lands on the live band.
+  bool tuning = (radioIndex == 0) ? g_tune1 : g_tune2;
+  BcdResult r = tuning ? BcdResult{0, true} : bcdFor(hz);
   if (radioIndex == 0) {
     if (r.code == g_lastBand1 && r.inhibit == g_lastInh1) return;
     driveBank(kBank1, r);
     g_lastBand1 = r.code;
     g_lastInh1  = r.inhibit;
-    Serial.printf("[R1] %s @ %ld Hz (bcd=%u inh=%d)\n",
-                  bandName(r.code, r.inhibit), hz, r.code, r.inhibit);
+    Serial.printf("[R1] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\n",
+                  bandName(r.code, r.inhibit), hz, r.code, r.inhibit, tuning);
   } else {
     if (r.code == g_lastBand2 && r.inhibit == g_lastInh2) return;
     driveBank(kBank2, r);
     g_lastBand2 = r.code;
     g_lastInh2  = r.inhibit;
-    Serial.printf("[R2] %s @ %ld Hz (bcd=%u inh=%d)\n",
-                  bandName(r.code, r.inhibit), hz, r.code, r.inhibit);
+    Serial.printf("[R2] %s @ %ld Hz (bcd=%u inh=%d tune=%d)\n",
+                  bandName(r.code, r.inhibit), hz, r.code, r.inhibit, tuning);
   }
+}
+
+// Tune state change: latch the new flag, re-evaluate the BCD bank
+// using the last known frequency, and update the LCD's state column.
+void onTuneChange(int radioIndex, bool tuning) {
+  if (radioIndex == 0) g_tune1 = tuning;
+  else                 g_tune2 = tuning;
+  long hz = (radioIndex == 0) ? g_lastFreq1 : g_lastFreq2;
+  applyBand(radioIndex, hz);
+  g_lcd.setTune(radioIndex, tuning);
 }
 
 // =============================================================================
@@ -169,6 +191,12 @@ void onSharedTrx(const int senderRig) {
   g_lcd.setTx(idx, g_radio1.rtx[senderRig].getTrx());
 }
 
+void onSharedTune(const int senderRig) {
+  int idx = sharedBpfIndex(senderRig);
+  if (idx < 0) return;
+  onTuneChange(idx, g_radio1.rtx[senderRig].getTune());
+}
+
 void onRadio1Vfo(const int senderRig, const int senderVfo) {
   if (senderRig != 0 || senderVfo != 0) return;
   long hz = g_radio1.rtx[senderRig].getVfo(senderVfo);
@@ -199,6 +227,15 @@ void onRadio1Trx(const int senderRig) {
 }
 void onRadio2Trx(const int senderRig) {
   g_lcd.setTx(1, g_radio2.rtx[senderRig].getTrx());
+}
+
+void onRadio1Tune(const int senderRig) {
+  if (senderRig != 0) return;
+  onTuneChange(0, g_radio1.rtx[senderRig].getTune());
+}
+void onRadio2Tune(const int senderRig) {
+  if (senderRig != 0) return;
+  onTuneChange(1, g_radio2.rtx[senderRig].getTune());
 }
 
 void onRadio1Connected() { Serial.println("[R1] TCI conn event"); }
@@ -241,6 +278,7 @@ void startTciClients() {
     g_radio1.attach_vfo_event(onSharedVfo);
     g_radio1.attach_modulation_event(onSharedModulation);
     g_radio1.attach_trx_event(onSharedTrx);
+    g_radio1.attach_tune_event(onSharedTune);
     g_radio1.connect();
     return;
   }
@@ -254,6 +292,7 @@ void startTciClients() {
   g_radio1.attach_vfo_event(onRadio1Vfo);
   g_radio1.attach_modulation_event(onRadio1Modulation);
   g_radio1.attach_trx_event(onRadio1Trx);
+  g_radio1.attach_tune_event(onRadio1Tune);
   g_radio1.connect();
   Serial.printf("[R1] TCI connecting to %s:%u (IARU %u)\n",
                 g_cfg.radio1_host, g_cfg.radio1_port, g_cfg.radio1_iaru);
@@ -265,6 +304,7 @@ void startTciClients() {
   g_radio2.attach_vfo_event(onRadio2Vfo);
   g_radio2.attach_modulation_event(onRadio2Modulation);
   g_radio2.attach_trx_event(onRadio2Trx);
+  g_radio2.attach_tune_event(onRadio2Tune);
   g_radio2.connect();
   Serial.printf("[R2] TCI connecting to %s:%u (IARU %u)\n",
                 g_cfg.radio2_host, g_cfg.radio2_port, g_cfg.radio2_iaru);

@@ -75,6 +75,13 @@ public:
     xSemaphoreGive(mutex_);
   }
 
+  void setTune(int radioIdx, bool tuning) {
+    if (radioIdx < 0 || radioIdx > 1 || !mutex_) return;
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    tune_[radioIdx] = tuning;
+    xSemaphoreGive(mutex_);
+  }
+
   // up = true  -> col 0 shows ' '  (link healthy)
   // up = false -> col 0 shows '*'  (TCI / WiFi link down — bypass forced)
   void setLink(int radioIdx, bool up) {
@@ -94,28 +101,34 @@ private:
     long  lf[2] = {0, 0};
     char  lm[2][8] = {{0}, {0}};
     bool  lt[2] = {false, false};
+    bool  ltu[2] = {false, false};
     bool  ll[2] = {false, false};
     for (;;) {
       xSemaphoreTake(mutex_, portMAX_DELAY);
       lf[0] = freq_[0]; lf[1] = freq_[1];
       strncpy(lm[0], mode_[0], sizeof(lm[0]));
       strncpy(lm[1], mode_[1], sizeof(lm[1]));
-      lt[0] = tx_[0]; lt[1] = tx_[1];
-      ll[0] = link_[0]; ll[1] = link_[1];
+      lt[0]  = tx_[0];   lt[1]  = tx_[1];
+      ltu[0] = tune_[0]; ltu[1] = tune_[1];
+      ll[0]  = link_[0]; ll[1]  = link_[1];
       xSemaphoreGive(mutex_);
 
       if (first) { lcd_->clear(); first = false; }
-      renderLine(0, ll[0], lf[0], lm[0], lt[0]);
-      renderLine(1, ll[1], lf[1], lm[1], lt[1]);
+      renderLine(0, ll[0], lf[0], lm[0], lt[0], ltu[0]);
+      renderLine(1, ll[1], lf[1], lm[1], lt[1], ltu[1]);
       vTaskDelay(pdMS_TO_TICKS(150));
     }
   }
 
   // Build the 16-column target buffer for a row, then push only the
   // columns that differ from the last frame.
-  void renderLine(int row, bool linkUp, long hz, const char* mode, bool tx) {
+  void renderLine(int row, bool linkUp, long hz, const char* mode,
+                  bool tx, bool tuning) {
     char buf[17];
     const char linkCh = linkUp ? ' ' : '*';
+    // State column: TU > TX > RX. TUNE wins because the bank is forced
+    // to bypass while it's engaged regardless of TX.
+    const char* state = tuning ? "TU" : (tx ? "TX" : "RX");
     if (!linkUp || hz <= 0) {
       // Link down, OR link up but no VFO data yet — show dashes for freq
       // and state so it's obvious the row is stale.
@@ -124,7 +137,7 @@ private:
     } else {
       double mhz = hz / 1000000.0;
       snprintf(buf, sizeof(buf), "%c%7.4f %-3s %2s",
-               linkCh, mhz, mode, tx ? "TX" : "RX");
+               linkCh, mhz, mode, state);
     }
     // Pad to 16 columns so leftover characters from a previous row are
     // overwritten cleanly.
@@ -157,6 +170,7 @@ private:
   long  freq_[2]   = {0, 0};
   char  mode_[2][8]= {{0}, {0}};
   bool  tx_[2]     = {false, false};
+  bool  tune_[2]   = {false, false};
   bool  link_[2]   = {false, false};
   // Last frame actually on the LCD; used for delta updates.
   char  shadow_[2][16] = {{0}, {0}};

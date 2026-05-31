@@ -201,8 +201,9 @@ Row 1:  '* 7.1000 LSB --'      <- BPF 2: TCI link DOWN (asterisk),
   `'*'` = TCI down → that BPF is in bypass.
 - **Col 1–8**: frequency in MHz, four decimals (10 Hz resolution).
 - **Col 10–12**: mode reported by TCI (USB, LSB, CW, DIGU, ...).
-- **Col 14–15**: `TX` while transmitting, `RX` otherwise, `--` when
-  the link is down.
+- **Col 14–15**: `TU` while the radio's TUNE button is engaged (the
+  BPF is forced to bypass for the duration), `TX` while transmitting,
+  `RX` otherwise, `--` when the link is down.
 
 The LCD refresh task runs on core 1 at 150 ms cadence and pushes only
 the columns that changed since the last frame; the I²C bus is clocked
