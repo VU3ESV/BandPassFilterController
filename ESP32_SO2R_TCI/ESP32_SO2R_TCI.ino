@@ -19,8 +19,7 @@
  *    dual-receiver radio) feeds two filters.
  *
  * Each BPF is dedicated to its own receiver (no SO2R cross-swap; that's
- * a separate firmware mode if needed later — see the MQTT reference at
- * .support/ESP32MQTTSwitchV2.ino).
+ * a separate firmware mode if needed later).
  *
  * BCD encoding: standard Yaesu Table 5 — 160m=1, 80m=2, 40m=3, 30m=4,
  * 20m=5, 17m=6, 15m=7, 12m=8, 10m=9, 6m=10. 60 m / out-of-band /
@@ -55,8 +54,9 @@ constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 // Pin map — active-LOW; HIGH = idle (relay off). See ESP32_SO2R_TCI/README.md.
 //
 // 8 relays = 8 pins total; 4 per radio. The 5B4AGN side keeps the BCD
-// pins from .support/ESP32MQTTSwitchV2.ino (16/17/18/19) because that
-// wiring is already in place. BPF 2 occupies the remaining 4 relays.
+// pins (16/17/18/19) inherited from the earlier MQTT-driven ESP32
+// build because that wiring is already in place. BPF 2 occupies the
+// remaining 4 relays.
 constexpr BcdBank kBank1 = { .pinA = 16, .pinB = 17, .pinC = 18, .pinD = 19 };
 constexpr BcdBank kBank2 = { .pinA = 33, .pinB = 32, .pinC = 27, .pinD = 26 };
 

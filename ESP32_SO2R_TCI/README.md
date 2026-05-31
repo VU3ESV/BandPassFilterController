@@ -14,9 +14,9 @@ Each BPF is dedicated to one receiver:
   RX‑1 drives BPF 1, RX‑2 drives BPF 2. Detected automatically when
   Radio 1 and Radio 2 have identical host/port in config.
 
-No SO2R "BPF follows the RX radio" swap logic — see the MQTT reference
-at [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-for that mode if needed.
+No SO2R "BPF follows the RX radio" swap logic — would require
+following each radio's `getTrx()` / `getTxEnable()` and cross‑routing
+the BCD outputs. Easy to add later as a compile‑time mode.
 
 ## Differences vs the ESP8266 sketches
 
@@ -37,8 +37,8 @@ inhibit line** in this build — the bypass state is "all four BCD
 lines HIGH" on the affected bank, which is what both 5B4AGN and
 Hamation see on a WARC band, on 6 m, or when the TCI link drops.
 
-Pin map (BPF 1 matches [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-verbatim because the 5B4AGN side is already wired):
+Pin map (BPF 1 matches the GPIOs used by the earlier MQTT‑driven
+ESP32 build verbatim because the 5B4AGN side is already wired):
 
 | Function | BPF 1 GPIO | BPF 2 GPIO |
 | --- | --- | --- |
@@ -108,12 +108,13 @@ TUNE pressed, OOB, 60 m, TCI link down, WiFi down.
 | `LiquidCrystal I2C` by Frank de Brabander | install via Arduino Library Manager (`arduino-cli lib install "LiquidCrystal I2C"`) | 16×2 I²C LCD driver. (The library's `library.properties` claims AVR‑only; it works on ESP32 anyway — `Wire.h` underneath is portable. Expect a harmless "may be incompatible" warning at compile time.) |
 
 The TCI source files in this folder are a copy of
-[`../.support/TCI-2/src/`](../.support/TCI-2/src/) with two small local
-patches: the `<RTX.h>` angle‑bracket include is rewritten to the quoted
-form so the files compile in‑place as sketch source, and the noisy
-`Unhandled message!` print in `TCI::parse_message()` is wrapped in
-`#if TCI_LOG_UNHANDLED` (default off). To re‑enable the diagnostic
-print, add `-DTCI_LOG_UNHANDLED=1` to the build flags.
+[IW7DMH's TCI v1.0.1](https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/)
+with two small local patches: the `<RTX.h>` angle‑bracket include is
+rewritten to the quoted form so the files compile in‑place as sketch
+source, and the noisy `Unhandled message!` print in
+`TCI::parse_message()` is wrapped in `#if TCI_LOG_UNHANDLED` (default
+off). To re‑enable the diagnostic print, add `-DTCI_LOG_UNHANDLED=1`
+to the build flags.
 
 ```bash
 arduino-cli lib install WebSockets "LiquidCrystal I2C"

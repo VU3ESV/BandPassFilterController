@@ -16,9 +16,9 @@
 //
 //   60m / out-of-band / disconnect: 0000  (all lines HIGH = bypass)
 //
-// Output convention (matches .support/ESP32MQTTSwitchV2.ino, minus the
-// inhibit line — the 8 relays on this carrier are fully consumed by
-// the two 4-bit BCD buses):
+// Output convention (inherited from the earlier MQTT-driven ESP32
+// build, minus the inhibit line — the 8 relays on this carrier are
+// fully consumed by the two 4-bit BCD buses):
 //   * BCD lines are ACTIVE-LOW. A bit set in the band code = the
 //     corresponding GPIO is driven LOW (relay energised on this carrier).
 //   * At boot, every output is driven HIGH (= idle / relay OFF).

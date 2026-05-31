@@ -41,9 +41,9 @@ Either filter can be on either bank; the firmware doesn't care.
   not forward tune state, so its bank uses the manual bypass path
   (see below).
 
-The bundled TCI library at [.support/TCI-2/](.support/TCI-2/) is
+The TCI library is
 [IW7DMH's v1.0.1](https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/);
-the canonical compiled copy now lives next to the sketch
+the compiled copy lives next to the sketch
 ([ESP32_SO2R_TCI/TCI.h](ESP32_SO2R_TCI/TCI.h),
 [ESP32_SO2R_TCI/TCI.cpp](ESP32_SO2R_TCI/TCI.cpp),
 [ESP32_SO2R_TCI/RTX.h](ESP32_SO2R_TCI/RTX.h),
@@ -123,13 +123,6 @@ both filters.
 │   ├── TCI.h / TCI.cpp           ← bundled IW7DMH TCI client
 │   ├── RTX.h / RTX.cpp             (locally patched — see notes above)
 │   └── README.md
-└── .support/
-    ├── ESP12TCPClientV6.ino      ← original ESP8266 reference sketch
-    ├── ESP32MQTTSwitchV2.ino     ← reference for BCD pin map +
-    │                               FreeRTOS LCD pattern (BPF1 pins
-    │                               kept identical so existing wiring
-    │                               carries over)
-    └── TCI-2/                    ← upstream TCI library snapshot
 ```
 
 ## Hardware
@@ -139,8 +132,8 @@ both filters.
   de‑energised). All 8 relays consumed: 4 per BPF for the BCD bus.
   No inhibit line — bypass is "all 4 lines HIGH" on the affected
   bank (or the WARC override above).
-- Pin map (BPF 1 matches `.support/ESP32MQTTSwitchV2.ino` so existing
-  5B4AGN wiring is preserved):
+- Pin map (BPF 1 matches the GPIOs used by the original MQTT
+  reference build so existing 5B4AGN wiring is preserved):
 
   | Function | BPF 1 GPIO | BPF 2 GPIO |
   | --- | --- | --- |
@@ -217,16 +210,18 @@ warning at compile time).
 - Manual bypass (web/serial) latches the same flag a TCI tune event
   would; the LCD shows `TU` so a forgotten engagement is visible.
 
-## Reference implementations
+## Historical context
 
-- [`.support/ESP12TCPClientV6.ino`](.support/ESP12TCPClientV6.ino) —
-  original ESP8266 reference sketch, source of the LC Technology
-  `ESP12F_Relay_X8` pin map and Kenwood `IF;` polling pattern. Not
-  used directly by the current firmware.
-- [`.support/ESP32MQTTSwitchV2.ino`](.support/ESP32MQTTSwitchV2.ino)
-  — MQTT‑driven ESP32 reference; the BPF 1 BCD pin map
-  (16/17/18/19) and the FreeRTOS LCD task pattern come from here.
-  Differences vs the current firmware: MQTT replaced with TCI;
-  inhibit lines dropped (all 8 relays consumed by two BCD banks);
-  shared‑server mode added; tune auto‑bypass and the WARC bypass
-  policy are new.
+Two earlier sketches shaped the current firmware (no longer in the
+repo, kept here for the design record):
+
+- The original ESP8266 IF;-CAT reference sketch — gave us the
+  Kenwood `IF;` over TCP polling pattern and the LC Technology
+  `ESP12F_Relay_X8` carrier pinout. Superseded when the firmware
+  moved to ESP32 + TCI.
+- An ESP32 MQTT switch build — gave us the BPF 1 BCD pin map
+  (16/17/18/19), the FreeRTOS LCD task pattern, and the active‑LOW
+  relay convention. Differences vs the current firmware: MQTT
+  replaced with TCI; inhibit lines dropped (all 8 relays consumed
+  by two BCD banks); shared‑server mode added; tune auto‑bypass
+  and the WARC bypass policy are new.

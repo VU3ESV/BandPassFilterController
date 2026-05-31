@@ -16,10 +16,9 @@ a generic ESP32 dev board with the relay carrier as a separate module.
 
 ## Pin map
 
-The BCD pins for BPF 1 (16/17/18/19) match
-[`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-deliberately, so the existing 5B4AGN wiring from the reference MQTT
-build carries over. BPF 2 uses the remaining four output GPIOs.
+The BCD pins for BPF 1 (16/17/18/19) match the GPIOs used by the
+earlier MQTT‑driven ESP32 build, so the existing 5B4AGN wiring from
+that build carries over. BPF 2 uses the remaining four output GPIOs.
 
 | Function | BPF 1 GPIO | BPF 2 GPIO | Boot behaviour |
 | --- | --- | --- | --- |
@@ -219,20 +218,17 @@ to a port that another process has open.
   for the 5B4AGN TX band‑pass filter. **Gated**: a free groups.io
   membership is required to read the archive.
 
-**ESP32 reference sketch**
+**Design lineage (sketches no longer in the repo)**
 
-- [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-  — earlier MQTT‑driven ESP32 build that the BCD pin map for BPF 1
-  and the FreeRTOS LCD task pattern came from. Differences vs the
-  current firmware: MQTT replaced with TCI; inhibit lines dropped
-  (all 8 relays used by two BCD banks); shared‑server mode added;
-  tune auto‑bypass and WARC‑bypass policy are new.
-
-**Legacy — ESP8266 era (not the current target)**
-
-- [`../.support/ESP12TCPClientV6.ino`](../.support/ESP12TCPClientV6.ino)
-  — original ESP8266 IF; CAT reference sketch. Not used by the
-  current firmware but kept for historical context.
+- An earlier ESP32 MQTT‑driven build is where the BPF 1 BCD pin map
+  (16/17/18/19), the FreeRTOS LCD task pattern, and the active‑LOW
+  relay convention came from. Differences vs the current firmware:
+  MQTT replaced with TCI; inhibit lines dropped (all 8 relays used
+  by two BCD banks); shared‑server mode added; tune auto‑bypass and
+  WARC‑bypass policy are new.
+- The original ESP8266 + Kenwood `IF;`‑CAT sketch on an LC Technology
+  `ESP12F_Relay_X8` carrier was the starting point of the project.
+  Not used by the current firmware.
 
 [iw7dmh]: https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/
 [tci-spec]: https://eesdr.com/en/manuals-en/eesdr3-en/tci-protocol-en
