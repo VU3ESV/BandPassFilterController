@@ -1,250 +1,240 @@
 # Hardware
 
-## Target board: LC Technology `ESP12F_Relay_X8`
+## Bill of materials
 
-The 8‑channel ESP‑12F WiFi relay board sold under many names (LC Technology,
-"eWeLink ESP8266 8‑Channel", "ESP12F_Relay_X8", DC 5 V or 7–28 V input,
-active‑HIGH relays). The product page the user originally pointed to is
-[Fruugo — "8‑Channel ESP8266 Wireless WiFi Relay Module ESP‑12F"][fruugo];
-the listing's description is sparse and partially incorrect, so the
-authoritative pinout below is taken from the Tasmota and ESPHome device
-databases — see the [References](#references) section at the end of this
-document.
+| Item | Qty | Notes |
+| --- | --- | --- |
+| ESP32 dev board (generic) | 1 | Any DOIT / DevKit‑C style board with on‑board USB. ESP32‑WROOM‑32 is what this firmware is tested against. |
+| 8‑channel relay carrier, **active‑LOW**, 5 V | 1 | Optoisolated input is preferred. Examples: SongHe / Tongling 8‑channel boards; the cheap "8 Channel 5V Relay Module" sold under many names. |
+| 16×2 I²C LCD, PCF8574 backpack | 1 (optional) | Default I²C address `0x27`; some modules ship `0x3F`. |
+| Jumper wire, ribbon cable | as needed | For the BCD bus to each BPF and power |
+| 5 V supply | 1 | Powers ESP32 dev board via USB *and* the relay carrier's `VCC`. ~250 mA peak with all 8 relays active. |
 
-> The original `.support/ESP12TCPClientV6.ino` reference sketch numbers the
-> `Relay1..Relay8` macros in **reverse** order from the board silkscreen
-> (Relay 1 in the code is the relay labelled *Relay 8* on the PCB). The
-> GPIOs themselves are correct — it's the labelling that's flipped. This
-> firmware uses the silkscreen labels.
+The earlier ESP8266 LC Technology `ESP12F_Relay_X8` board (active‑HIGH,
+no on‑board USB) is **no longer the target** — the firmware now runs on
+a generic ESP32 dev board with the relay carrier as a separate module.
 
-### Canonical Relay → GPIO map (silkscreen)
+## Pin map
 
-The table below is the consensus mapping across the
-[Tasmota `ESP12F_Relay_X8` template][tasmota] and the
-[ESPHome `esp-12f-relay-x8` device page][esphome], cross‑checked against
-Werner Rothschopf's hands‑on [browser‑switch write‑up][rothschopf].
+The BCD pins for BPF 1 (16/17/18/19) match
+[`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
+deliberately, so the existing 5B4AGN wiring from the reference MQTT
+build carries over. BPF 2 uses the remaining four output GPIOs.
 
-| Silkscreen | GPIO | Boot behaviour | Used by this firmware |
+| Function | BPF 1 GPIO | BPF 2 GPIO | Boot behaviour |
 | --- | --- | --- | --- |
-| Relay 1 | **GPIO16** | **Pulses ON at boot** — GPIO16 floats high briefly before `setup()` drives it low ([noted by Tasmota][tasmota]) | **No** (skipped — see below) |
-| Relay 2 | GPIO14 | clean | **Yes — 160 m** |
-| Relay 3 | GPIO12 | clean | **Yes — 80 m** |
-| Relay 4 | GPIO13 | clean | **Yes — 40 m** |
-| Relay 5 | GPIO15 | board pulls LOW (required boot‑strap); stays OFF at boot | **Yes — 20 m** |
-| Relay 6 | **GPIO0**  | **Pulses ON at boot** — GPIO0 must be HIGH for normal boot; the carrier holds it HIGH → relay energised until firmware drives it LOW | **No** (skipped — see below) |
-| Relay 7 | GPIO4  | clean | **Yes — 15 m** |
-| Relay 8 | GPIO5  | clean | **Yes — 10 m** |
+| BCD A (LSB) | 16 | 33 | clean |
+| BCD B | 17 | 32 | clean |
+| BCD C | 18 | 27 | clean |
+| BCD D (MSB) | 19 | 26 | clean |
+| I²C SDA | 21 | — | clean (LCD) |
+| I²C SCL | 22 | — | clean (LCD) |
 
-All relays on this board are **active‑HIGH** (relay coil energised when the
-GPIO is driven HIGH). Contacts are typically 10 A @ 250 VAC / 10 A @ 30 VDC
-(rating depends on the relay variant fitted; check yours before pushing
-mains).
+All eight BCD outputs are **active‑LOW** — driven HIGH at boot (in
+`setupBank()`) to keep the relays de‑energised. None of these GPIOs
+have strapping conflicts at reset, so there's no boot‑time glitching
+to engineer around (unlike the ESP8266 GPIO0 / GPIO15 / GPIO16
+gotchas on the LC Tech ESP12F board).
 
-### Why we skip Relay 1 and Relay 6
+GPIO 0 is left untouched (used by the on‑board USB‑serial chip for
+flash mode). GPIO 1 / 3 are the on‑board UART0 (Serial console).
+GPIO 2 (on‑board LED on many dev boards) is free.
 
-On power‑up the ESP8266 needs **GPIO0 HIGH** (to boot from flash) and
-**GPIO15 LOW** (boot‑strap), and **GPIO16** has no internal pull and tends
-to float HIGH for a few hundred milliseconds before the firmware initialises
-it. On this board:
+## BCD bus → BPF
 
-- GPIO16 → Relay 1: energises briefly at every reboot. Confirmed by both
-  the [Tasmota template][tasmota] and Werner Rothschopf's
-  [write‑up][rothschopf].
-- GPIO0  → Relay 6: HIGH at boot is *required*, so Relay 6 is energised from
-  power‑up until the firmware in `setup()` drives it LOW.
+Each BPF expects a 4‑bit BCD bus on its rear‑panel control connector.
+Wire the GPIO outputs (post‑relay if your carrier passes through;
+direct if you're tapping the GPIOs straight) to the corresponding
+A/B/C/D inputs:
 
-For a hot station that is a problem — a brief 160 m or 10 m relay pulse
-could feed an in‑transmit RF path into the wrong filter section. By
-assigning band lines to Relays **2, 3, 4, 5, 7, 8** only, none of the six
-contest bands glitches at boot. Relays 1 and 6 are left unused; their
-boot‑time pulses are harmless because nothing is wired to them.
+```
+        ESP32 ──┐
+                │ active-LOW: pin pulled LOW = bit set
+                ▼
+   GPIO 16 ── relay 1 NO ── BPF 1 BCD A
+   GPIO 17 ── relay 2 NO ── BPF 1 BCD B
+   GPIO 18 ── relay 3 NO ── BPF 1 BCD C
+   GPIO 19 ── relay 4 NO ── BPF 1 BCD D
+   GPIO 33 ── relay 5 NO ── BPF 2 BCD A
+   GPIO 32 ── relay 6 NO ── BPF 2 BCD B
+   GPIO 27 ── relay 7 NO ── BPF 2 BCD C
+   GPIO 26 ── relay 8 NO ── BPF 2 BCD D
+   GND    ── relay coil ground ── BPF control ground (common)
+```
 
-> **Conflicting source — verify on your unit.** Werner's write‑up also
-> claims **GPIO15 (Relay 5)** activates briefly at boot. The Tasmota
-> template does not. The ESP8266 datasheet requires GPIO15 to be LOW at
-> reset (the carrier provides a pull‑down), so a *pulse* would be
-> surprising. We currently route **20 m → Relay 5**. After the first
-> power‑up of your built board, **listen for which relays click during
-> boot**: if Relay 5 *does* click, swap 20 m off Relay 5 (e.g. retire 20 m
-> to Relay 5 → GPIO and accept the boot pulse, or change `kPin20` in
-> `BandPlan.h` to one of the spare GPIOs after retiring a less‑critical
-> band). This unit is the canonical test case for resolving the source
-> disagreement.
+Use the relay contacts to switch the BPF's +5 V (Hamation) or
++12 V band line, and tie the relay coils to the ESP32's GPIO via
+the carrier's optoisolated input header.
 
-### Firmware ↔ band ↔ relay table
-
-| Band | GPIO (firmware constant) | Silkscreen relay | Wire band line here |
-| --- | --- | --- | --- |
-| 160 m | GPIO14 (`kPin160`) | **Relay 2** | NO/COM of Relay 2 |
-| 80 m  | GPIO12 (`kPin80`)  | **Relay 3** | NO/COM of Relay 3 |
-| 40 m  | GPIO13 (`kPin40`)  | **Relay 4** | NO/COM of Relay 4 |
-| 20 m  | GPIO15 (`kPin20`)  | **Relay 5** | NO/COM of Relay 5 |
-| 15 m  | GPIO4  (`kPin15`)  | **Relay 7** | NO/COM of Relay 7 |
-| 10 m  | GPIO5  (`kPin10`)  | **Relay 8** | NO/COM of Relay 8 |
-
-## Wiring to the filter
+If your BPF's BCD inputs are 3.3 V‑tolerant CMOS (some custom builds
+are), you can skip the relay carrier entirely and run GPIOs straight
+to the BCD pins. The active‑LOW convention then needs an inverter or
+a software flip; today the firmware emits active‑LOW because the
+target carrier is active‑LOW.
 
 ### 5B4AGN TXBPF
 
-The TXBPF design exposes one band‑select line per filter section. Wire the
-NO contact of each of the six relays above to the matching TXBPF band‑select
-input, with a common ground between the carrier and the TXBPF control PCB.
+The TXBPF reads a 4‑bit BCD code (Yaesu Table 5) on its rear‑panel
+control connector. A matching code engages the corresponding filter
+section; an unmatched code (WARC, 6 m, or `0000`) releases all six
+section relays — the filter passes through its bypass path.
 
-When all six relays are de‑energised the TXBPF should sit in its all‑off /
-bypass state. **Verify against your specific TXBPF build** by cross‑checking
-with the [TXBPF groups.io community][txbpf] (gated; membership required) —
-community builds vary; check the schematic before applying RF.
+Wire the 4 relay contacts of BPF 1's bank to the TXBPF control PCB's
+BCD A/B/C/D inputs, with common ground. Verify against your specific
+TXBPF build (community variations exist) on the
+[TXBPF groups.io community][txbpf] (free membership required) before
+applying RF.
 
 ### Hamation MBF‑100 BandPasser II
 
-Per the [Hamation product page][hamation], the BandPasser II expects
-**+5 V to +12 V** on a per‑band input on its rear‑panel control connector
-and "automatically enters Bypass mode … when no power is applied or no
-filters are selected." The relay contacts on this carrier are the right
-interface:
+Per the [Hamation product page][hamation], the BandPasser II's rear
+control connector accepts a 4‑bit BCD code. The decoder reads the
+code and engages one of the six contest sections; unrecognised codes
+(WARC 30/17/12 m, 6 m) **engage Hamation's built‑in bypass relay**.
+
+There is one critical quirk: **BCD `0000` is decoded as 160 m**, not
+bypass. So the firmware never emits `0000` on a bank — it picks a
+WARC code instead (see "Bypass policy" in
+[ARCHITECTURE.md](ARCHITECTURE.md)). With WARC codes Hamation safely
+bypasses regardless of which BPF is wired on which bank.
+
+Power Hamation from its own +12 V supply (~100 mA); share ground
+with the ESP32 / relay carrier so the relay contacts can switch the
+BCD bus reference.
+
+## I²C LCD wiring
 
 ```
-  +12 V ──┬────────────────────────────────────────────────────────
-          │
-          ├── Relay 2 NO ── 160 m band input
-          ├── Relay 3 NO ── 80 m  band input
-          ├── Relay 4 NO ── 40 m  band input
-          ├── Relay 5 NO ── 20 m  band input
-          ├── Relay 7 NO ── 15 m  band input
-          └── Relay 8 NO ── 10 m  band input
-  GND  ──── BandPasser II ground (common)
+   ESP32 GPIO 21 (SDA) ── LCD backpack SDA
+   ESP32 GPIO 22 (SCL) ── LCD backpack SCL
+   ESP32 5V            ── LCD backpack VCC
+   ESP32 GND           ── LCD backpack GND
 ```
 
-With all six relays de‑energised, no band input is fed and the BandPasser II
-auto‑bypasses. That matches the firmware's bypass behaviour.
+The I²C clock is bumped to 400 kHz in `LcdDisplay::begin()` so a
+full‑row redraw is fast enough to keep up with frequency ticks.
 
-If you prefer a solid‑state interface, a ULN2003A / ULN2803A open‑collector
-sink can replace the relay contacts; tie its inputs to the same GPIOs and
-its outputs (commoned with +12 V via the BandPasser II inputs) to the band
-lines.
+If your module's I²C address is `0x3F` instead of `0x27`, change the
+call in `setup()`:
+
+```cpp
+bpf::g_lcd.begin(0x3F);
+```
+
+A quick way to find out: install the `i2cdetect` example from the
+`Wire` library or any address scanner and watch the serial output.
 
 ## Power
 
-The carrier accepts 5 V at the screw terminal or 7–28 V at the wider input
-(internal buck to 5 V, then LDO to 3.3 V for the ESP‑12F). Current draw is
-typically < 100 mA idle plus ~70 mA per energised relay coil.
-
-The Hamation needs its own 12–14 V supply at ~100 mA — share ground with the
-carrier so the relay contacts can switch the Hamation's +12 V rail.
+- ESP32 dev board: powered from USB (typical) or from a regulated
+  5 V source on `VIN` / `5V`. Current draw is ~120 mA average.
+- Relay carrier: powered from the same 5 V rail. ~70 mA per
+  energised coil; with 4 of 8 relays on at any band, peak is around
+  280 mA + the ESP32, so a 500 mA supply is comfortable.
+- BPF supplies are independent (each filter has its own ±12 V or
+  similar). Common ground all three.
 
 ## Programming the board
 
-**The carrier has no on‑board USB jack.** Programming requires an external
-USB‑to‑TTL adapter (FTDI / CP2102 / genuine CH340 recommended) wired to a
-header on the PCB. See Werner Rothschopf's [board write‑up][rothschopf]
-for the canonical procedure.
+ESP32 dev boards have an on‑board USB‑serial chip (CP2102 or CH340)
+and auto‑reset circuitry — no jumpering, no buttons. Plug the USB
+cable in and:
 
-### Header pads brought out by the carrier
+```bash
+arduino-cli core install esp32:esp32
+arduino-cli lib install WebSockets "LiquidCrystal I2C"
+arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+  --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
+```
 
-`5 V`, `TXd (= ESP GPIO1)`, `RXd (= ESP GPIO3)`, `IO0 (= GPIO0)`, `GND`
-(multiple), plus `GPIO2` / `ADC` as diagnostics. Solder a pin‑header to
-these pads if your carrier doesn't already have one fitted.
+`UploadSpeed=115200` is intentional — the default 921600 introduces
+sync errors on cheap CH340 clones. The compile + flash takes about
+80 seconds on a stock Mac.
 
-### Adapter wiring (TX/RX are crossed — common gotcha)
+### macOS USB‑serial caveats (verified 2026‑05)
 
-| USB‑TTL adapter pin | Board header pad |
-| --- | --- |
-| TX | RXd (= GPIO3) |
-| RX | TXd (= GPIO1) |
-| GND | GND |
-| 5 V | 5 V (only if the adapter is your power source; do not double‑feed) |
+- **CH340 / CH341 clones**: install the WCH driver from
+  <https://www.wch.cn/downloads/CH34XSER_MAC_ZIP.html>. The native
+  macOS driver works for some board variants but glitches at high
+  baud rates. Always force `UploadSpeed=115200`.
+- **CP2102**: native macOS driver works out of the box; ports
+  appear as `/dev/cu.usbserial-0001` or similar.
+- **Prolific PL2303 (VID 0x067B, 0x2192)**: the 0x2192 variant
+  triggers `termios EINVAL` on macOS during `_set_port_baudrate`.
+  Switch to a CP2102 or FTDI cable if you hit it.
+- Devices like the **SunSDR E‑Coder** front panel enumerate as
+  Prolific too — `ls /dev/cu.*` can show unrelated USB‑serial ports.
+  Check `ioreg -p IOUSB | grep -i product` to identify which one is
+  your ESP32 dev board before flashing.
 
-### Flash‑mode entry (per Werner)
+### When the upload says "port busy"
 
-1. **Tie IO0 to GND** (jumper, or hold an IO0 push‑button if you've fitted
-   one).
-2. **Press RESET** on the board (or briefly short EN/CH_PD to GND if no
-   button).
-3. **Start the upload** in the Arduino IDE / arduino‑cli / esptool.
-4. After the upload completes, **remove the IO0‑to‑GND jumper and reset
-   the board** so it boots normally.
-
-### macOS adapter caveats (verified 2026‑05)
-
-- macOS termios is unusually strict; cheap USB‑serial clones that work on
-  Linux can fail with `termios EINVAL` on `_set_port_baudrate` /
-  `_port.open(force_update=True)`. If you see that error, the adapter is
-  the problem, not esptool or the board. Switch to a known‑good FTDI cable
-  before retrying.
-- 74880 baud (the ESP8266 ROM bootloader's boot‑log rate) is not supported
-  by every macOS USB‑serial driver. esptool uses 115200 by default; leave
-  it there unless an FTDI cable is in use.
-
-### Arduino IDE / arduino‑cli board profile
-
-Werner uses *NodeMCU 0.9*. *Generic ESP8266 Module* with
-`eesz=4M1M,baud=115200` (the FQBN this repo expects) is equivalent and
-gives finer control over the flash partitioning.
-
-Power the board from the USB‑TTL adapter's 5 V output during flashing, OR
-from the screw‑terminal input — never both at once.
-
-## Optional additions
-
-- **Status LED.** Spare Relay 7 / Relay 8 outputs can drive an LED. The
-  firmware currently uses Relay 7 (15 m) and Relay 8 (10 m); if you want a
-  status LED, drop one of the unused bands or wire an LED off the ESP‑12F's
-  on‑board LED pad (GPIO2).
-- **Factory‑reset jumper.** A momentary switch from any unused GPIO to GND
-  can be sampled in `setup()`; not enabled by default to avoid surprise
-  behaviour. Pick a pin not used as a relay drive.
+Close every serial monitor (`screen`, `cu`, `pyserial`, Arduino IDE
+Serial Monitor) before retrying. macOS won't grant exclusive access
+to a port that another process has open.
 
 ## Quick sanity check before applying RF
 
-1. Power the board from the USB‑TTL adapter (or 5 V screw terminal) only —
-   no RF connected, no filter wired.
-2. Watch the relay LEDs through `setup()`. **Relays 1 and 6 will flash
-   briefly** (boot strap). The six band relays (2/3/4/5/7/8) must stay
-   **OFF**. If Relay 5 *also* clicks, that's the GPIO15 boot‑pulse Werner
-   warned about — see the caveat box under "Why we skip Relay 1 and 6".
-3. Once the firmware is up, tune the radio to 160 m → Relay 2 should
-   energise on its own. Step through each band and verify the matching relay
-   activates. Tune to a WARC band → all relays must drop.
-4. *Only then* connect the filter's RF and band‑select wiring.
+1. Power the board from USB only — no RF, no BPFs connected.
+2. Watch serial at 115200. You should see:
+   ```
+   BandPassFilterController :: ESP32 SO2R / TCI
+   [wifi] AP 'BPF-Setup-A1B2C3' at 192.168.4.1
+   ```
+   (or, after configuration, `[wifi] STA up, ip=…`).
+3. Join the AP, browse to `192.168.4.1`, fill the form, save, reboot.
+4. Once on station WiFi, point your radio's TCI server at it and
+   tune to 160 m. Expect:
+   - LCD row 0 (or 1, depending on which radio) shows `' 1.8500 LSB RX'`.
+   - Serial: `[R1] 160m @ 1850000 Hz (bcd=1 inh=0 tune=0)`.
+   - On the BPF 1 bank: GPIO 16 LOW, 17/18/19 HIGH.
+5. Step through each band; for WARC bands (30/17/12 m) expect:
+   - LCD shows the freq normally.
+   - Bank emits the WARC code itself (e.g. `bcd=4 inh=0` on 30 m).
+   - On 5B4AGN / Hamation, the filter bypasses (no matching section).
+6. Press TUNE on the radio (if its TCI server emits tune events).
+   Expect LCD state column to flip to `TU`, serial:
+   `[BPF1] TUNE change -> ON (forcing bypass)` then
+   `[R1] bypass @ … (bcd=<warc> inh=1 tune=1)`. Release TUNE — the
+   bank snaps back to the live band.
+7. *Only then* connect RF.
 
 ## References
 
-Sources used to verify the pinout, boot‑time behaviour, and filter control
-interfaces in this document.
+**TCI library**
 
-**Carrier board — LC Technology `ESP12F_Relay_X8`**
-
-- [Fruugo product listing — "8‑Channel ESP8266 Wireless WiFi Relay Module ESP‑12F"][fruugo]
-  — original product page that prompted this project. Description is sparse
-  and partially inaccurate; cited here only as the storefront link.
-- [Tasmota — `ESP12F_Relay_X8` template][tasmota] — authoritative
-  Relay→GPIO mapping; flags the GPIO16 / Relay 1 boot pulse.
-- [ESPHome — `esp-12f-relay-x8` device][esphome] — cross‑check of the same
-  pinout in an independent firmware project.
-- [Werner Rothschopf — "ESP8266 ESP12F Relay X8 board to switch pins with browser"][rothschopf]
-  — hands‑on confirmation of pinout, programming sequence, and active‑HIGH
-  relay logic.
-
-**ESP8266 boot strapping**
-
-The boot‑mode requirements (GPIO0 HIGH, GPIO15 LOW, GPIO2 HIGH at reset)
-are part of the ESP8266 hardware spec; see Espressif's
-[ESP8266 hardware design guidelines][esp-hw] §2.4 for the canonical
-strap‑pin table.
+- [IW7DMH TCI for ESP32 / Arduino — v1.0.1][iw7dmh]
+  — upstream library, bundled into the sketch as `TCI.h/.cpp` +
+  `RTX.h/.cpp` with local patches (see
+  [`../ESP32_SO2R_TCI/README.md`](../ESP32_SO2R_TCI/README.md)).
+- [Expert Electronics TCI protocol specification][tci-spec]
+  — protocol reference for ExpertSDR3 / SunSDR / MB1.
 
 **Filters**
 
-- [Hamation MBF‑100 BandPasser II product page][hamation] — six contest
-  bands (160/80/40/20/15/10), +5–12 V per‑band rear‑panel control,
-  auto‑bypass with no input applied.
-- [TXBPF groups.io community][txbpf] — discussion / variants of the 5B4AGN
-  TX band‑pass filter. **Gated**: a free groups.io membership is required to
-  read the message archive and uploaded schematics.
+- [Hamation MBF‑100 BandPasser II product page][hamation] — six
+  contest bands, +5–12 V per band on rear control connector.
+  Critical decoder quirk: `0000` = 160 m (not bypass).
+- [TXBPF groups.io community][txbpf] — discussion / schematics
+  for the 5B4AGN TX band‑pass filter. **Gated**: a free groups.io
+  membership is required to read the archive.
 
-[fruugo]: https://www.fruugonorge.com/8-channel-esp8266-wireless-wifi-relay-module-esp-12f-development-board-dc-5v7-28v-e-welink-app-remo/p-350285115-763787021?language=en
-[tasmota]: https://templates.blakadder.com/ESP12F_Relay_X8.html
-[esphome]: https://devices.esphome.io/devices/esp-12f-relay-x8/
-[rothschopf]: https://werner.rothschopf.net/microcontroller/202108_esp8266_esp12f_relay_x8_en.htm
-[esp-hw]: https://www.espressif.com/sites/default/files/documentation/esp8266_hardware_design_guidelines_en.pdf
+**ESP32 reference sketch**
+
+- [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
+  — earlier MQTT‑driven ESP32 build that the BCD pin map for BPF 1
+  and the FreeRTOS LCD task pattern came from. Differences vs the
+  current firmware: MQTT replaced with TCI; inhibit lines dropped
+  (all 8 relays used by two BCD banks); shared‑server mode added;
+  tune auto‑bypass and WARC‑bypass policy are new.
+
+**Legacy — ESP8266 era (not the current target)**
+
+- [`../.support/ESP12TCPClientV6.ino`](../.support/ESP12TCPClientV6.ino)
+  — original ESP8266 IF; CAT reference sketch. Not used by the
+  current firmware but kept for historical context.
+
+[iw7dmh]: https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/
+[tci-spec]: https://eesdr.com/en/manuals-en/eesdr3-en/tci-protocol-en
 [hamation]: https://www.hamation.com/Bandpasser.html
 [txbpf]: https://groups.io/g/TXBPF

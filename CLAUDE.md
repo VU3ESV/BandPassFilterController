@@ -107,10 +107,10 @@ both filters.
 .
 ├── CLAUDE.md                     ← this file
 ├── README.md                     ← public README
-├── docs/                         ← legacy notes from the ESP8266 era;
-│   ├── ARCHITECTURE.md             not authoritative for the current
-│   ├── HARDWARE.md                 ESP32 firmware. Treat as reference
-│   ├── CONFIGURATION.md            material until rewritten.
+├── docs/                         ← long-form reference; current
+│   ├── ARCHITECTURE.md             with the shipping firmware
+│   ├── HARDWARE.md                 (ESP32 + TCI + dual/shared mode
+│   ├── CONFIGURATION.md            + WARC bypass policy)
 │   └── RADIO_PROTOCOLS.md
 ├── ESP32_SO2R_TCI/               ← the firmware
 │   ├── ESP32_SO2R_TCI.ino        ← main sketch (TCI handlers, wiring,

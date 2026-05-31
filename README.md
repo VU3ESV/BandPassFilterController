@@ -92,11 +92,15 @@ Released. Tested end‑to‑end against:
 - **AetherSDR + TCI** (dual mode; manual bypass since AetherSDR's
   TCI doesn't emit tune events).
 
-See [`CLAUDE.md`](CLAUDE.md) for the full architecture rationale and
+See [`CLAUDE.md`](CLAUDE.md) for the full architecture rationale,
 [`ESP32_SO2R_TCI/README.md`](ESP32_SO2R_TCI/README.md) for the
 sketch‑level reference (pins, bypass policy, web routes, dependency
-list). The `docs/` folder contains the legacy ESP8266‑era notes and
-is no longer authoritative.
+list), and [`docs/`](docs/) for long‑form documentation:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — runtime model, FreeRTOS task layout, state machine, safety properties.
+- [docs/HARDWARE.md](docs/HARDWARE.md) — BOM, pin map, BPF wiring, LCD, programming, sanity check before applying RF.
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — EEPROM schema v2, web routes, manual bypass, serial commands, defaults.
+- [docs/RADIO_PROTOCOLS.md](docs/RADIO_PROTOCOLS.md) — TCI event subset used, dual vs shared mode, verified servers + caveats.
 
 ## License
 
