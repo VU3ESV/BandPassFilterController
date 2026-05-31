@@ -41,12 +41,17 @@ constexpr const char* kDefaultHostname = "bpf-so2r";
 constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 
 // Pin map — active-LOW; HIGH = idle (relay off). See ESP32_SO2R_TCI/README.md.
-constexpr BcdBank kBank1 = {
-  .pinA = 16, .pinB = 17, .pinC = 18, .pinD = 19, .pinInhibit = 26,
-};
-constexpr BcdBank kBank2 = {
-  .pinA = 27, .pinB = 32, .pinC = 33, .pinD = 25, .pinInhibit = 14,
-};
+//
+// 8 relays = 8 pins total; 4 per radio. The 5B4AGN side keeps the BCD
+// pins from .support/ESP32MQTTSwitchV2.ino (16/17/18/19) because that
+// wiring is already in place. The Hamation side reuses the freed
+// R1_Tx/R2_Tx/relay8 pins from the reference plus one spare GPIO.
+//
+// No inhibit line: code=0 (WARC / OOB / disconnect) sets all four BCD
+// lines HIGH on the affected bank, which presents the BPF with "no band
+// data applied" — same as the bypass state.
+constexpr BcdBank kBank1 = { .pinA = 16, .pinB = 17, .pinC = 18, .pinD = 19 };
+constexpr BcdBank kBank2 = { .pinA = 27, .pinB = 32, .pinC = 33, .pinD = 25 };
 
 // Globals.
 Config        g_cfg;

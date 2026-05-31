@@ -1,18 +1,22 @@
-// BcdBandPlan.h — frequency → Yaesu band-data BCD code + inhibit signal.
+// BcdBandPlan.h — frequency → Yaesu band-data BCD code.
 //
-// Output convention (matches .support/ESP32MQTTSwitchV2.ino):
+// Output convention (matches .support/ESP32MQTTSwitchV2.ino, minus the
+// inhibit line — the 8 relays on this carrier are fully consumed by the
+// two 4-bit BCD buses, leaving no relay for a separate inhibit signal):
 //   * BCD lines are ACTIVE-LOW. A bit set in the band code = the
-//     corresponding GPIO is driven LOW.
-//   * INHIBIT is ACTIVE-LOW. The line is driven LOW when the controller
-//     wants the BPF in its bypass / inhibit state (WARC bands, 60 m, 6 m,
-//     out-of-band, disconnect, parse failure).
-//   * At boot, every output is driven HIGH (= idle). The relay carrier
-//     used in this design treats HIGH as relay-OFF.
+//     corresponding GPIO is driven LOW (relay energised on this carrier).
+//   * At boot, every output is driven HIGH (= idle / relay OFF).
+//   * On WARC bands, 60 m, 6 m, out-of-band, disconnect, or parse failure
+//     the band code is **0**, which translates to all four BCD lines HIGH
+//     — the same state the BPF sees with no band data applied, i.e.
+//     bypass. Both filters auto-bypass when no band line is asserted.
 //
 // Yaesu BCD band codes (standard):
 //   160m=1 (0001)  80m=2 (0010)  40m=3 (0011)
 //   20m=5  (0101)  15m=7 (0111)  10m=9 (1001)
-// WARC bands (30/17/12), 60 m, 6 m and out-of-band assert INHIBIT instead.
+// The `inhibit` flag in BcdResult is retained as an internal status
+// signal (drives serial logging and the /status JSON) but no longer
+// corresponds to a GPIO.
 #ifndef BPF_BCD_BAND_PLAN_H
 #define BPF_BCD_BAND_PLAN_H
 
@@ -49,33 +53,31 @@ inline const char* bandName(uint8_t code, bool inhibit) {
   return "?";
 }
 
-// One BCD output bank (4 BCD pins + 1 inhibit). Active-LOW logic.
+// One BCD output bank — 4 BCD pins, active-LOW logic. No inhibit pin
+// (all 8 relays on this carrier are spoken for by the two banks combined).
 struct BcdBank {
-  uint8_t pinA, pinB, pinC, pinD, pinInhibit;
+  uint8_t pinA, pinB, pinC, pinD;
 };
 
 inline void setupBank(const BcdBank& b) {
-  pinMode(b.pinA,       OUTPUT);
-  pinMode(b.pinB,       OUTPUT);
-  pinMode(b.pinC,       OUTPUT);
-  pinMode(b.pinD,       OUTPUT);
-  pinMode(b.pinInhibit, OUTPUT);
+  pinMode(b.pinA, OUTPUT);
+  pinMode(b.pinB, OUTPUT);
+  pinMode(b.pinC, OUTPUT);
+  pinMode(b.pinD, OUTPUT);
   // Idle = HIGH (relay OFF on the active-LOW carrier).
-  digitalWrite(b.pinA,       HIGH);
-  digitalWrite(b.pinB,       HIGH);
-  digitalWrite(b.pinC,       HIGH);
-  digitalWrite(b.pinD,       HIGH);
-  digitalWrite(b.pinInhibit, HIGH);  // not inhibited at boot
+  digitalWrite(b.pinA, HIGH);
+  digitalWrite(b.pinB, HIGH);
+  digitalWrite(b.pinC, HIGH);
+  digitalWrite(b.pinD, HIGH);
 }
 
 inline void driveBank(const BcdBank& b, BcdResult r) {
-  // Active-LOW: bit set in code → drive line LOW.
+  // r.code == 0 (WARC / OOB / disconnect) -> all lines HIGH = bypass.
+  // r.inhibit is no longer wired anywhere; it just rides along for status.
   digitalWrite(b.pinA, (r.code & 0x1) ? LOW : HIGH);
   digitalWrite(b.pinB, (r.code & 0x2) ? LOW : HIGH);
   digitalWrite(b.pinC, (r.code & 0x4) ? LOW : HIGH);
   digitalWrite(b.pinD, (r.code & 0x8) ? LOW : HIGH);
-  // Inhibit active-LOW.
-  digitalWrite(b.pinInhibit, r.inhibit ? LOW : HIGH);
 }
 
 }  // namespace bpf

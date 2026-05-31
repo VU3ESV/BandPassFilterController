@@ -22,10 +22,15 @@ for that mode if needed.
 
 ## Hardware
 
-ESP32 dev board (any) + an 8‑relay carrier wired up with active‑LOW inputs.
-Pin map (matches [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-for BPF 1; BPF 2 reuses the freed R1_Tx / R2_Tx / relay8 plus two spare
-GPIOs):
+One ESP32 dev board + one 8‑relay carrier (active‑LOW inputs). All 8
+relays are used: 4 per radio for the two 4‑bit BCD buses. **No inhibit
+line** in this build — the bypass state is "all four BCD lines HIGH" on
+the affected bank, which is what both 5B4AGN and Hamation see on a WARC
+band, on 6 m, or when the TCI link drops.
+
+Pin map (BPF 1 matches [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
+verbatim because the 5B4AGN side is already wired; BPF 2 reuses the
+freed R1_Tx / R2_Tx / relay8 plus one spare GPIO):
 
 | Function | BPF 1 GPIO | BPF 2 GPIO |
 | --- | --- | --- |
@@ -33,22 +38,21 @@ GPIOs):
 | BCD B | 17 | 32 |
 | BCD C | 18 | 33 |
 | BCD D | 19 | 25 |
-| INHIBIT | 26 | 14 |
 
 All outputs are **active‑LOW** — driven HIGH at boot to keep the relays
-de‑energised. INHIBIT LOW = filter goes to bypass.
+de‑energised.
 
 ### Yaesu BCD codes used
 
 ```
-Band   BCD (DCBA)   Inhibit
-160 m  0001 (1)     HIGH (not inhibited)
-80  m  0010 (2)     HIGH
-40  m  0011 (3)     HIGH
-20  m  0101 (5)     HIGH
-15  m  0111 (7)     HIGH
-10  m  1001 (9)     HIGH
-WARC / 60 m / 6 m / OOB / disconnect:  all HIGH, INHIBIT LOW
+Band   BCD (DCBA)
+160 m  0001 (1)
+80  m  0010 (2)
+40  m  0011 (3)
+20  m  0101 (5)
+15  m  0111 (7)
+10  m  1001 (9)
+WARC / 60 m / 6 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
 ```
 
 ## Dependencies
