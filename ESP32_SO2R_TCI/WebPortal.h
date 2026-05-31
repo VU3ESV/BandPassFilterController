@@ -118,6 +118,11 @@ private:
                        "r2_host", "r2_port", "r2_iaru",
                        cfg_->radio2_host, cfg_->radio2_port, cfg_->radio2_iaru);
 
+    h += F("<p style='font-size:.85em;color:#555'>Tip: if a single radio "
+           "(e.g. SunSDR2 PRO) feeds both BPFs, enter the same host/port "
+           "in Radio 1 and Radio 2. The firmware opens one TCI client and "
+           "routes RX-1 to BPF 1 and RX-2 to BPF 2.</p>");
+
     h += F("<button type='submit'>Save</button></form>");
     h += F("<hr><form method='POST' action='/reboot' style='display:inline'>"
            "<button>Reboot</button></form> "

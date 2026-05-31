@@ -1,12 +1,21 @@
 # ESP32 SO2R / TCI variant
 
-One ESP32 dev board → two TCI WebSocket connections → two Yaesu‑style BCD
-band‑data buses → drives **two band‑pass filters at once** (5B4AGN TXBPF
-and Hamation BandPasser II, or any other BCD‑input filter).
+One ESP32 dev board → up to two TCI WebSocket connections → two
+Yaesu‑style BCD band‑data buses → drives **two band‑pass filters at
+once** (5B4AGN TXBPF, Hamation BandPasser II, or any other BCD‑input
+filter).
 
-Each filter is dedicated to one radio: Radio 1 drives BPF 1, Radio 2 drives
-BPF 2. No SO2R "BPF follows the RX radio" swap logic — see the MQTT
-reference at [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
+Each BPF is dedicated to one receiver:
+
+- **DUAL server mode** — two separate TCI servers (one per radio).
+  Each filter follows its own radio's main RX VFO A.
+- **SHARED server mode** — one TCI server feeds both filters. Useful
+  for a dual‑receiver radio (e.g. SunSDR2 PRO) feeding two BPFs:
+  RX‑1 drives BPF 1, RX‑2 drives BPF 2. Detected automatically when
+  Radio 1 and Radio 2 have identical host/port in config.
+
+No SO2R "BPF follows the RX radio" swap logic — see the MQTT reference
+at [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
 for that mode if needed.
 
 ## Differences vs the ESP8266 sketches
@@ -14,30 +23,29 @@ for that mode if needed.
 | | `5B4AGN/`, `Hamation/` (ESP8266) | `ESP32_SO2R_TCI/` (this) |
 | --- | --- | --- |
 | MCU | ESP‑12F (ESP8266EX) | ESP32 (any dev board) |
-| Radios | one per controller | **two per controller** |
+| Radios | one per controller | **one or two per controller** |
 | Protocol | Kenwood `IF;` over TCP | **TCI WebSocket** (native) |
-| Filter | one (1‑of‑6 relay outputs) | **two** (4‑bit BCD per filter + inhibit) |
+| Filter | one (1‑of‑6 relay outputs) | **two** (4‑bit BCD per filter) |
 | Logic level | active‑HIGH 1‑of‑6 | **active‑LOW Yaesu BCD** |
-| Config | web portal + EEPROM | hardcoded constants (first cut) |
+| Config | web portal + EEPROM | web portal + EEPROM |
 
 ## Hardware
 
 One ESP32 dev board + one 8‑relay carrier (active‑LOW inputs). All 8
-relays are used: 4 per radio for the two 4‑bit BCD buses. **No inhibit
-line** in this build — the bypass state is "all four BCD lines HIGH" on
-the affected bank, which is what both 5B4AGN and Hamation see on a WARC
-band, on 6 m, or when the TCI link drops.
+relays are used: 4 per filter for the two 4‑bit BCD buses. **No
+inhibit line** in this build — the bypass state is "all four BCD
+lines HIGH" on the affected bank, which is what both 5B4AGN and
+Hamation see on a WARC band, on 6 m, or when the TCI link drops.
 
 Pin map (BPF 1 matches [`../.support/ESP32MQTTSwitchV2.ino`](../.support/ESP32MQTTSwitchV2.ino)
-verbatim because the 5B4AGN side is already wired; BPF 2 reuses the
-freed R1_Tx / R2_Tx / relay8 plus one spare GPIO):
+verbatim because the 5B4AGN side is already wired):
 
 | Function | BPF 1 GPIO | BPF 2 GPIO |
 | --- | --- | --- |
-| BCD A | 16 | 27 |
+| BCD A | 16 | 33 |
 | BCD B | 17 | 32 |
-| BCD C | 18 | 33 |
-| BCD D | 19 | 25 |
+| BCD C | 18 | 27 |
+| BCD D | 19 | 26 |
 
 All outputs are **active‑LOW** — driven HIGH at boot to keep the relays
 de‑energised.
@@ -59,23 +67,20 @@ WARC / 60 m / 6 m / OOB / disconnect:  0000  (all lines HIGH = bypass)
 
 | Library | Source | Purpose |
 | --- | --- | --- |
-| `TCI` by IW7DMH v1.0.1 | bundled at [`../.support/TCI-2/`](../.support/TCI-2/) — see also <https://iw7dmh.jimdofree.com/sunsdr2-pages/tci-esp32s-arduino-libraries/> | TCI WebSocket client |
+| `TCI` by IW7DMH v1.0.1 | **bundled** — `TCI.h/.cpp` + `RTX.h/.cpp` live next to the .ino, gated unhandled‑message print | TCI WebSocket client |
 | `WebSockets` by Markus Sattler | install via Arduino Library Manager (`arduino-cli lib install WebSockets`) | required transitively by `TCI` |
-| `LiquidCrystal I2C` by Frank de Brabander | install via Arduino Library Manager (`arduino-cli lib install "LiquidCrystal I2C"`) | 16×2 I²C LCD driver. (The library's `library.properties` claims AVR-only; it works on ESP32 anyway — `Wire.h` underneath is portable. Expect a harmless "may be incompatible" warning at compile time.) |
+| `LiquidCrystal I2C` by Frank de Brabander | install via Arduino Library Manager (`arduino-cli lib install "LiquidCrystal I2C"`) | 16×2 I²C LCD driver. (The library's `library.properties` claims AVR‑only; it works on ESP32 anyway — `Wire.h` underneath is portable. Expect a harmless "may be incompatible" warning at compile time.) |
 
-### Install the bundled TCI library
-
-```bash
-# from the repo root
-cp -R .support/TCI-2 ~/Documents/Arduino/libraries/TCI
-# or symlink instead so future updates stay in sync:
-# ln -s "$(pwd)/.support/TCI-2" ~/Documents/Arduino/libraries/TCI
-```
-
-Then install the WebSockets dep:
+The TCI source files in this folder are a copy of
+[`../.support/TCI-2/src/`](../.support/TCI-2/src/) with two small local
+patches: the `<RTX.h>` angle‑bracket include is rewritten to the quoted
+form so the files compile in‑place as sketch source, and the noisy
+`Unhandled message!` print in `TCI::parse_message()` is wrapped in
+`#if TCI_LOG_UNHANDLED` (default off). To re‑enable the diagnostic
+print, add `-DTCI_LOG_UNHANDLED=1` to the build flags.
 
 ```bash
-arduino-cli lib install WebSockets
+arduino-cli lib install WebSockets "LiquidCrystal I2C"
 ```
 
 ## Configure
@@ -88,28 +93,34 @@ Identical UX to the ESP8266 sketches' portal but with **two** radio
 sections.
 
 1. On first boot (or after a factory reset), the controller raises a
-   SoftAP named `BPF-Setup-XXXXXX` (`XXXXXX` = lower 24 bits of the ESP32
-   eFuse MAC). Join it from a phone / laptop.
+   SoftAP named `BPF-Setup-XXXXXX` (`XXXXXX` = lower 24 bits of the
+   ESP32 eFuse MAC). Join it from a phone / laptop.
 2. Browse to `http://192.168.4.1/`.
 3. Fill in: WiFi SSID + password, hostname, Radio 1 (host/port/IARU
    region), Radio 2 (host/port/IARU region). Save → reboot.
 4. Once on station WiFi, the portal is reachable at
-   `http://<hostname>.local/` (mDNS) or the DHCP-assigned IP printed to
+   `http://<hostname>.local/` (mDNS) or the DHCP‑assigned IP printed to
    serial at 115200.
+
+**Shared server tip:** to feed both BPFs from a single dual‑receiver
+radio (SunSDR2 PRO etc.), enter the **same host and port** in Radio 1
+and Radio 2. The firmware detects the match, opens one TCI client,
+and routes RX‑1 (rig 0) to BPF 1 and RX‑2 (rig 1) to BPF 2. The portal
+shows a hint about this under the Radio 2 section.
 
 Routes:
 
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/` | GET | HTML form |
-| `/save` | POST | URL-encoded form, writes EEPROM, returns "Saved" |
-| `/status` | GET | JSON: filter / WiFi / R1 + R2 connected + last band / uptime |
+| `/save` | POST | URL‑encoded form, writes EEPROM, returns "Saved" |
+| `/status` | GET | JSON: filter / mode / WiFi / R1 + R2 connected + last band / uptime |
 | `/reboot` | POST | Soft reboot |
 | `/factory_reset` | POST | Zero EEPROM (requires `confirm=YES`) |
 
-Config is persisted to flash (EEPROM emulation, 384-byte page with magic
-`0xBF50C0DE`, version 2, CRC32-checksummed). On magic / version / CRC
-mismatch the controller drops back to AP-portal mode.
+Config is persisted to flash (EEPROM emulation, 384‑byte page with
+magic `0xBF50C0DE`, version 2, CRC32‑checksummed). On magic / version
+/ CRC mismatch the controller drops back to AP‑portal mode.
 
 ### Option B: hardcoded defaults
 
@@ -117,23 +128,25 @@ If you'd rather skip the portal entirely, edit `defaults()` in
 [Config.h](Config.h) to set the values you want and let the firmware
 fall back to them when the EEPROM is blank. Defaults today:
 
-- Hostname: `bpf-so2r`
+- Hostname: `SO2R-BPF`
 - Radio 1: `192.168.1.20:50001`, IARU region 1
 - Radio 2: `192.168.1.21:50001`, IARU region 1
 
-Default TCI port for ExpertSDR3 / SunSDR is **50001**. IARU region 1 / 2 / 3
-sets the band edges (default 1 = Europe/Africa).
+Default TCI port for ExpertSDR3 / SunSDR is **50001**. IARU region 1 / 2
+/ 3 sets the band edges (default 1 = Europe/Africa).
 
 ## Build / flash
 
 ```bash
 arduino-cli core install esp32:esp32     # once
-arduino-cli compile --fqbn esp32:esp32:esp32 ESP32_SO2R_TCI
-arduino-cli upload --fqbn esp32:esp32:esp32 --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
+arduino-cli lib install WebSockets "LiquidCrystal I2C"
+arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+  --upload --port /dev/cu.usbserial-XXXX ESP32_SO2R_TCI
 ```
 
-(Pick whichever ESP32 board profile matches your dev board — `esp32` is the
-generic profile and works for nearly every variant.)
+(Pick whichever ESP32 board profile matches your dev board — `esp32`
+is the generic profile and works for nearly every variant. Forcing
+`UploadSpeed=115200` works around CH340 noise at the default 921600.)
 
 ## Status / debug
 
@@ -141,39 +154,54 @@ Serial console at 115200 baud:
 
 ```
 BandPassFilterController :: ESP32 SO2R / TCI
-[wifi] connecting to 'PiHackerNet_Mesh'...
-[wifi] up, ip=192.168.86.55
-[R1] TCI connected
-[R2] TCI connected
+[wifi] STA connecting to 'HomeMesh'.........
+[wifi] STA up, ip=192.168.86.55
+[mdns] http://SO2R-BPF.local/
+[tci] shared server mode -> 192.168.1.20:50001 (BPF1=rig0, BPF2=rig1)
+[R1] TCI conn event
 [R1] 20m @ 14250000 Hz (bcd=5 inh=0)
 [R2] 40m @ 7080000 Hz (bcd=3 inh=0)
 ```
 
 If either WiFi or a TCI link drops, the affected bank is forced to
-INHIBIT (bypass) until the link comes back.
+bypass (all BCD lines released HIGH) until the link comes back, and
+column 0 of the affected LCD row changes from a space to `*`.
 
 ## 16×2 I²C LCD
 
 Connect a standard PCF8574‑backed 16×2 LCD to the ESP32's I²C pins
 (`SDA` = GPIO 21, `SCL` = GPIO 22 on most dev boards) and 5 V / GND.
-The LCD comes up at 0x27 by default; some modules ship at 0x3F — change
-the `g_lcd.begin()` argument in `setup()` if yours is 0x3F.
+The LCD comes up at 0x27 by default; some modules ship at 0x3F —
+change the `g_lcd.begin()` argument in `setup()` if yours is 0x3F.
 
-Layout (mirrors the reference MQTT sketch, condensed to 16 columns):
+Layout (16 columns):
 
 ```
-Row 0:  ' 14.2500 USB RX'      <- Radio 1: freq MHz, mode, TX/RX
-Row 1:  '  7.1000 LSB TX'      <- Radio 2
+col:    0123456789012345
+Row 0:  ' 14.2500 USB RX'      <- BPF 1: link OK, 20m USB, receiving
+Row 1:  '* 7.1000 LSB --'      <- BPF 2: TCI link DOWN (asterisk),
+                                  stale freq, dashes for state
 ```
 
-A FreeRTOS task pinned to **core 1** redraws every 500 ms; the TCI
-event handlers on core 0 push updates behind a mutex. While a radio
-hasn't reported its VFO yet the row shows `----.----  --` so it's
-obvious which link hasn't synced.
+- **Col 0**: link indicator. `' '` = TCI connected (and WiFi up);
+  `'*'` = TCI down → that BPF is in bypass.
+- **Col 1–8**: frequency in MHz, four decimals (10 Hz resolution).
+- **Col 10–12**: mode reported by TCI (USB, LSB, CW, DIGU, ...).
+- **Col 14–15**: `TX` while transmitting, `RX` otherwise, `--` when
+  the link is down.
+
+The LCD refresh task runs on core 1 at 150 ms cadence and pushes only
+the columns that changed since the last frame; the I²C bus is clocked
+at 400 kHz. Together this keeps a frequency tick on the dial visible
+on the LCD with no perceptible lag.
 
 ## What's not in this build
 
-- **No SO2R swap mode.** Each BPF is dedicated to one radio. Add a
-  build‑time `#define BPF_SO2R_SWAP` and read each TCI's `getTrx()` /
-  `getTxEnable()` state if you want the reference's
+- **No SO2R swap mode.** Each BPF is dedicated to one radio /
+  receiver. Add a build‑time `#define BPF_SO2R_SWAP` and read each
+  TCI's `getTrx()` / `getTxEnable()` state if you want the reference's
   "BPF follows the RX radio" behaviour later.
+- **No verbose TCI dump.** The bundled TCI library gates its
+  "Unhandled message!" diagnostic behind `TCI_LOG_UNHANDLED`; set it
+  to `1` at build time to flood the console with every TCI frame the
+  firmware ignores.

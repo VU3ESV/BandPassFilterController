@@ -4,12 +4,14 @@ ESP8266 / ESP‑12 firmware that automatically selects the right contest band on
 an HF band‑pass filter by polling an attached radio's frequency over the
 network.
 
-Two filter models are supported, one firmware build per device:
+Two filter models are supported, plus a third "dual" variant that drives
+two filters from one ESP32 over TCI:
 
-| Filter | Bands | Control input | Sketch |
+| Filter / build | Radios | Protocol | Sketch |
 | --- | --- | --- | --- |
-| **5B4AGN TXBPF** ([group](https://groups.io/g/TXBPF)) | 160 / 80 / 40 / 20 / 15 / 10 m | Internal band‑select relays | [`5B4AGN/`](5B4AGN/) |
-| **Hamation MBF‑100 BandPasser II** ([product](https://www.hamation.com/Bandpasser.html)) | 160 / 80 / 40 / 20 / 15 / 10 m | +5–12 V per‑band on rear control connector | [`Hamation/`](Hamation/) |
+| **5B4AGN TXBPF** ([group](https://groups.io/g/TXBPF)) | one | Kenwood `IF;` over TCP (ESP8266) | [`5B4AGN/`](5B4AGN/) |
+| **Hamation MBF‑100 BandPasser II** ([product](https://www.hamation.com/Bandpasser.html)) | one | Kenwood `IF;` over TCP (ESP8266) | [`Hamation/`](Hamation/) |
+| **ESP32 SO2R / TCI** (any BCD‑input BPF — drives 2 filters) | one or two | TCI WebSocket (ExpertSDR3 / SunSDR) | [`ESP32_SO2R_TCI/`](ESP32_SO2R_TCI/) |
 
 ## Features
 

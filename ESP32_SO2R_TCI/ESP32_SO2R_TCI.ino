@@ -1,36 +1,45 @@
 /*
  * BandPassFilterController — ESP32 SO2R / TCI variant
  *
- * One ESP32 carries two independent TCI-WebSocket clients to two SunSDR /
+ * One ESP32 carries up to two TCI-WebSocket clients to one or two SunSDR /
  * Expert Electronics radios and emits two independent Yaesu-style BCD
- * band-data buses — one per radio. Each BCD bank drives one band-pass
+ * band-data buses — one per BPF. Each BCD bank drives one band-pass
  * filter:
  *
  *   Radio 1  --TCI-->  BPF1 (e.g. 5B4AGN TXBPF)    via BCD bank 1
- *   Radio 2  --TCI-->  BPF2 (e.g. Hamation MBF-100) via BCD bank 2
+ *   Radio 2  --TCI-->  BPF2 (e.g. another 5B4AGN)  via BCD bank 2
  *
- * Each BPF is dedicated to its own radio (no SO2R cross-swap; that's a
- * separate firmware mode if needed later — see the MQTT reference at
+ * Two server modes, picked automatically from config:
+ *
+ *  - DUAL: Radio 1 and Radio 2 have different host:port pairs. Two TCI
+ *    clients are opened; each filters on rig=0 / vfo=0 (main RX VFO A).
+ *  - SHARED: Radio 1 and Radio 2 point at the SAME host:port. Only one
+ *    TCI client is opened; rig=0 events drive BPF 1, rig=1 events drive
+ *    BPF 2. This is the right wiring when a single SunSDR2 PRO (or any
+ *    dual-receiver radio) feeds two filters.
+ *
+ * Each BPF is dedicated to its own receiver (no SO2R cross-swap; that's
+ * a separate firmware mode if needed later — see the MQTT reference at
  * .support/ESP32MQTTSwitchV2.ino).
  *
  * BCD encoding: Yaesu band data — 160m=1, 80m=2, 40m=3, 20m=5, 15m=7,
- * 10m=9. WARC (30/17/12), 60 m, 6 m and out-of-band assert INHIBIT.
+ * 10m=9. WARC (30/17/12), 60 m, 6 m and out-of-band drop to bypass
+ * (all four BCD lines released HIGH on the affected bank).
  *
  * Configuration is persisted in flash (EEPROM emulation) and editable
  * from a tiny on-device web portal — first boot raises a SoftAP named
  * `BPF-Setup-XXXXXX` reachable at http://192.168.4.1/.
  *
  * Hardware: ESP32 dev board driving an 8-relay active-LOW carrier.
- * Library: TCI by IW7DMH (in .support/TCI-2/; install into the Arduino
- *          libraries folder — see ESP32_SO2R_TCI/README.md).
+ * Library: TCI by IW7DMH (bundled in this sketch folder; see README).
  */
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <DNSServer.h>
-#include <TCI.h>
 
+#include "TCI.h"
 #include "Config.h"
 #include "BcdBandPlan.h"
 #include "WebPortal.h"
@@ -45,48 +54,49 @@ constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 //
 // 8 relays = 8 pins total; 4 per radio. The 5B4AGN side keeps the BCD
 // pins from .support/ESP32MQTTSwitchV2.ino (16/17/18/19) because that
-// wiring is already in place. The Hamation side reuses the freed
-// R1_Tx/R2_Tx/relay8 pins from the reference plus one spare GPIO.
-//
-// No inhibit line: code=0 (WARC / OOB / disconnect) sets all four BCD
-// lines HIGH on the affected bank, which presents the BPF with "no band
-// data applied" — same as the bypass state.
+// wiring is already in place. BPF 2 occupies the remaining 4 relays.
 constexpr BcdBank kBank1 = { .pinA = 16, .pinB = 17, .pinC = 18, .pinD = 19 };
 constexpr BcdBank kBank2 = { .pinA = 33, .pinB = 32, .pinC = 27, .pinD = 26 };
 
 // Globals.
 Config        g_cfg;
 TCI           g_radio1;
-TCI           g_radio2;
+TCI           g_radio2;            // unused in SHARED mode
 WebPortal     g_web;
 LcdDisplay    g_lcd;
 DNSServer     g_dns;
 bool          g_apMode    = false;
+bool          g_sharedTci = false; // both BPFs served by g_radio1
 volatile long g_lastFreq1 = 0;
 volatile long g_lastFreq2 = 0;
 volatile uint8_t g_lastBand1 = 0;
 volatile uint8_t g_lastBand2 = 0;
 volatile bool    g_lastInh1  = true;
 volatile bool    g_lastInh2  = true;
+volatile bool    g_lastLink1 = false;
+volatile bool    g_lastLink2 = false;
 
 // =============================================================================
 // Status JSON for /status.
 // =============================================================================
 
 String statusJson() {
+  bool r1up = g_radio1.connected();
+  bool r2up = g_sharedTci ? r1up : g_radio2.connected();
   String j;
-  j.reserve(320);
+  j.reserve(360);
   j += "{";
   j += "\"filter\":\""; j += kFilterLabel;                                  j += "\",";
+  j += "\"mode\":\"";   j += (g_sharedTci ? "shared" : "dual");              j += "\",";
   j += "\"ap_mode\":";  j += (g_apMode ? "true" : "false");                  j += ",";
   j += "\"wifi\":\"";   j += (WiFi.status() == WL_CONNECTED ? "up" : "down");j += "\",";
   j += "\"ip\":\"";     j += (g_apMode ? WiFi.softAPIP().toString()
                                        : WiFi.localIP().toString());         j += "\",";
   j += "\"rssi\":";     j += WiFi.RSSI();                                    j += ",";
-  j += "\"r1\":{\"connected\":"; j += (g_radio1.connected() ? "true" : "false");
+  j += "\"r1\":{\"connected\":"; j += (r1up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq1;
   j += ",\"band\":\"";           j += bandName(g_lastBand1, g_lastInh1);     j += "\"},";
-  j += "\"r2\":{\"connected\":"; j += (g_radio2.connected() ? "true" : "false");
+  j += "\"r2\":{\"connected\":"; j += (r2up ? "true" : "false");
   j += ",\"freq_hz\":";          j += g_lastFreq2;
   j += ",\"band\":\"";           j += bandName(g_lastBand2, g_lastInh2);     j += "\"},";
   j += "\"uptime_s\":";          j += (millis() / 1000);
@@ -119,13 +129,47 @@ void applyBand(int radioIndex, long hz) {
 
 // =============================================================================
 // TCI event handlers.
+//
+// In DUAL mode each filter has its own TCI client and only listens to
+// rig=0 / vfo=0 (the main RX, VFO A) of its own client.
+// In SHARED mode g_radio1 is the only client, and we demux:
+//   senderRig == 0 -> BPF 1
+//   senderRig == 1 -> BPF 2
+// VFO B (vfoId != 0) is ignored in both modes; the main dial drives the BPF.
 // =============================================================================
 
-void onRadio1Vfo(const int senderRig, const int senderVfo) {
+inline int sharedBpfIndex(int senderRig) {
+  // 0 -> BPF 1 (LCD row 0), 1 -> BPF 2 (LCD row 1). Anything else: drop.
+  return (senderRig == 0 || senderRig == 1) ? senderRig : -1;
+}
+
+void onSharedVfo(const int senderRig, const int senderVfo) {
+  if (senderVfo != 0) return;
+  int idx = sharedBpfIndex(senderRig);
+  if (idx < 0) return;
   long hz = g_radio1.rtx[senderRig].getVfo(senderVfo);
-  Serial.printf("[R1] vfo evt rig=%d vfo=%d hz=%ld\n",
-                senderRig, senderVfo, hz);
-  if (senderRig != 0 || senderVfo != 0) return;  // only main RX, VFO A
+  if (hz <= 0) return;
+  if (idx == 0) g_lastFreq1 = hz;
+  else          g_lastFreq2 = hz;
+  applyBand(idx, hz);
+  g_lcd.setFreq(idx, hz);
+}
+
+void onSharedModulation(const int senderRig) {
+  int idx = sharedBpfIndex(senderRig);
+  if (idx < 0) return;
+  g_lcd.setMode(idx, g_radio1.rtx[senderRig].getModulation());
+}
+
+void onSharedTrx(const int senderRig) {
+  int idx = sharedBpfIndex(senderRig);
+  if (idx < 0) return;
+  g_lcd.setTx(idx, g_radio1.rtx[senderRig].getTrx());
+}
+
+void onRadio1Vfo(const int senderRig, const int senderVfo) {
+  if (senderRig != 0 || senderVfo != 0) return;
+  long hz = g_radio1.rtx[senderRig].getVfo(senderVfo);
   if (hz <= 0) return;
   g_lastFreq1 = hz;
   applyBand(0, hz);
@@ -133,10 +177,8 @@ void onRadio1Vfo(const int senderRig, const int senderVfo) {
 }
 
 void onRadio2Vfo(const int senderRig, const int senderVfo) {
-  long hz = g_radio2.rtx[senderRig].getVfo(senderVfo);
-  Serial.printf("[R2] vfo evt rig=%d vfo=%d hz=%ld\n",
-                senderRig, senderVfo, hz);
   if (senderRig != 0 || senderVfo != 0) return;
+  long hz = g_radio2.rtx[senderRig].getVfo(senderVfo);
   if (hz <= 0) return;
   g_lastFreq2 = hz;
   applyBand(1, hz);
@@ -177,8 +219,32 @@ void startApMode() {
   g_dns.start(53, "*", ip);
 }
 
+// Returns true if both radios resolve to the exact same TCI server.
+bool isSharedTciConfig(const Config& c) {
+  if (c.radio1_host[0] == '\0' || c.radio2_host[0] == '\0') return false;
+  if (c.radio1_port != c.radio2_port) return false;
+  return strcasecmp(c.radio1_host, c.radio2_host) == 0;
+}
+
 void startTciClients() {
-  // Radio 1
+  g_sharedTci = isSharedTciConfig(g_cfg);
+
+  if (g_sharedTci) {
+    Serial.printf("[tci] shared server mode -> %s:%u (BPF1=rig0, BPF2=rig1)\n",
+                  g_cfg.radio1_host, g_cfg.radio1_port);
+    g_radio1.set_host(g_cfg.radio1_host);
+    g_radio1.set_port(g_cfg.radio1_port);
+    g_radio1.set_iaru_region(g_cfg.radio1_iaru);
+    g_radio1.attach_conn_disc_event(onRadio1Connected);
+    g_radio1.attach_vfo_event(onSharedVfo);
+    g_radio1.attach_modulation_event(onSharedModulation);
+    g_radio1.attach_trx_event(onSharedTrx);
+    g_radio1.connect();
+    return;
+  }
+
+  // DUAL mode: two TCI clients, one per radio/filter.
+  Serial.printf("[tci] dual server mode\n");
   g_radio1.set_host(g_cfg.radio1_host);
   g_radio1.set_port(g_cfg.radio1_port);
   g_radio1.set_iaru_region(g_cfg.radio1_iaru);
@@ -190,7 +256,6 @@ void startTciClients() {
   Serial.printf("[R1] TCI connecting to %s:%u (IARU %u)\n",
                 g_cfg.radio1_host, g_cfg.radio1_port, g_cfg.radio1_iaru);
 
-  // Radio 2
   g_radio2.set_host(g_cfg.radio2_host);
   g_radio2.set_port(g_cfg.radio2_port);
   g_radio2.set_iaru_region(g_cfg.radio2_iaru);
@@ -262,18 +327,28 @@ void loop() {
   bpf::g_web.tick();
   if (bpf::g_apMode) bpf::g_dns.processNextRequest();
 
-  // Failsafe: if WiFi or either TCI link drops, force the affected bank to
-  // bypass (INHIBIT asserted). Cheap check on a 500 ms cadence.
+  // Failsafe + link status: every 250 ms check WiFi + TCI health and force
+  // bypass on the affected bank if the link drops. Also push the link
+  // status to the LCD so col 0 of each row reflects current health.
   static uint32_t lastCheck = 0;
   uint32_t now = millis();
-  if (now - lastCheck >= 500) {
+  if (now - lastCheck >= 250) {
     lastCheck = now;
-    if (bpf::g_apMode || WiFi.status() != WL_CONNECTED) {
-      if (!bpf::g_lastInh1) bpf::applyBand(0, 0);
-      if (!bpf::g_lastInh2) bpf::applyBand(1, 0);
-    } else {
-      if (!bpf::g_radio1.connected() && !bpf::g_lastInh1) bpf::applyBand(0, 0);
-      if (!bpf::g_radio2.connected() && !bpf::g_lastInh2) bpf::applyBand(1, 0);
+    bool wifiUp = !bpf::g_apMode && WiFi.status() == WL_CONNECTED;
+    bool r1Up   = wifiUp && bpf::g_radio1.connected();
+    bool r2Up   = bpf::g_sharedTci ? r1Up
+                                   : (wifiUp && bpf::g_radio2.connected());
+
+    if (!r1Up && !bpf::g_lastInh1) bpf::applyBand(0, 0);
+    if (!r2Up && !bpf::g_lastInh2) bpf::applyBand(1, 0);
+
+    if (r1Up != bpf::g_lastLink1) {
+      bpf::g_lastLink1 = r1Up;
+      bpf::g_lcd.setLink(0, r1Up);
+    }
+    if (r2Up != bpf::g_lastLink2) {
+      bpf::g_lastLink2 = r2Up;
+      bpf::g_lcd.setLink(1, r2Up);
     }
   }
 
