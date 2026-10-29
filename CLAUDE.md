@@ -117,6 +117,7 @@ both filters.
 │   │                               failsafe, manual bypass plumbing)
 │   ├── Config.h                  ← EEPROM schema, magic, CRC32
 │   ├── BcdBandPlan.h             ← Yaesu Table 5 + nearest-WARC bypass
+│   ├── AdminAuth.h               ← admin password in NVS (portal + OTA)
 │   ├── WebPortal.h               ← /, /save, /status, /bypass, /reboot
 │   ├── LcdDisplay.h              ← 16x2 I2C LCD, link indicator, delta
 │   │                               redraw at 150 ms / 400 kHz I2C
@@ -179,23 +180,34 @@ Config persists to a 384‑byte EEPROM page (magic `0xBF50C0DE`,
 version 2, CRC32). On magic/version/CRC mismatch the controller drops
 back to AP‑portal mode.
 
-Web routes:
+Web routes (Auth = `admin` → HTTP Digest, user `admin`, realm
+`BandPassFilterController`, once an admin password is set):
 
-| Route | Method | Purpose |
-| --- | --- | --- |
-| `/` | GET | HTML config form + manual‑bypass buttons + backup/restore |
-| `/save` | POST | Persist form, return "Saved" |
-| `/status` | GET | JSON: mode / wifi / R1+R2 connected, last band, tuning, sensors, history |
-| `/config` | GET | JSON: stored config (no Wi-Fi password) for backup download |
-| `/discover` | GET | JSON: device identity + port map + endpoint paths |
-| `/history` | POST | `clear=YES` wipes the band-change ring buffer |
-| `/live` | GET | Standalone WebSocket-driven live status page |
-| `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force‑bypass |
-| `/reboot` | POST | Soft reboot |
-| `/factory_reset` | POST | Zero EEPROM (`confirm=YES` required) |
+| Route | Method | Auth | Purpose |
+| --- | --- | --- | --- |
+| `/` | GET | admin | HTML config form + manual‑bypass buttons + backup/restore |
+| `/save` | POST | admin | Persist form (optional `admin_pass` sets the password), return "Saved" |
+| `/status` | GET | – | JSON: mode / wifi / R1+R2 connected, last band, tuning, sensors, history |
+| `/config` | GET | – | JSON: stored config (no Wi-Fi password) for backup download |
+| `/discover` | GET | – | JSON: device identity + `auth_required` + port map + endpoint paths |
+| `/history` | POST | admin | `clear=YES` wipes the band-change ring buffer |
+| `/live` | GET | – | Standalone WebSocket-driven live status page |
+| `/bypass` | POST | admin | `bpf=1\|2&on=0\|1` — manual force‑bypass |
+| `/reboot` | POST | admin | Soft reboot |
+| `/factory_reset` | POST | admin | Zero EEPROM + admin password (`confirm=YES` required) |
 
-Serial commands at 115200: `status`, `reset`,
-`bypass{1,2} {on,off}`.
+Admin password ([ESP32_SO2R_TCI/AdminAuth.h](ESP32_SO2R_TCI/AdminAuth.h)):
+one password guards the portal, the `admin` routes above and OTA. It
+lives in NVS (`bpf-auth`), not in the EEPROM Config page, so it needed
+no schema bump and is never compiled in. Set/replace it from the
+portal (blank = keep); empty = everything open as before v0.6.0, with
+a red banner on the portal. The port‑81 WebSocket is read‑only and
+stays open. The companion macOS app answers the Digest challenge with
+a Keychain-stored password.
+
+Serial commands at 115200: `status`, `reset` (also clears the admin
+password), `auth clear` (lost-password recovery: clears only the
+admin password), `bypass{1,2} {on,off}`.
 
 ## Build & flash
 
@@ -227,15 +239,15 @@ arduino-cli compile \
   is being rewritten, and disconnects both TCI clients so the
   WebSocket reader tasks don't compete with `espota` for the Wi-Fi
   stack.
-- OTA password is set by editing `kOtaPassword` near the top of
-  [ESP32_SO2R_TCI.ino](ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino); default is
-  empty. `--upload-field password=…` is mandatory either way
-  (arduino-cli prompts otherwise). Empty default = anyone on the
-  LAN can flash arbitrary firmware on UDP 3232 — fine for a trusted
-  hamshack, risky on a shared / guest network. Rotation **does not
-  need USB**: upload the new firmware authenticating with the OLD
-  password; the new password takes effect after reboot. USB is only
-  required if the current password is lost.
+- OTA password = the **admin password** set in the portal (see
+  above); `--upload-field password=<admin password>` is mandatory
+  either way (arduino-cli prompts otherwise; pass an empty value while
+  none is set). No password = anyone on the LAN can flash arbitrary
+  firmware on UDP 3232, so set one right after the first flash.
+  Changing it in the portal applies to OTA immediately (the portal
+  calls `ArduinoOTA.setPassword()`); only the mDNS `auth_upload` flag
+  waits for a reboot. Lost password → `auth clear` on the USB serial
+  console.
 
 ## Defaults / safety
 

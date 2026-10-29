@@ -40,27 +40,52 @@ and fall back to defaults, which is the safe behaviour.
 
 Served by the on‑device `WebServer` on port 80.
 
-| Route | Method | Purpose |
-| --- | --- | --- |
-| `/` | GET | HTML form, prefilled with current config + manual‑bypass buttons + backup/restore. |
-| `/save` | POST | URL‑encoded form. Updates the struct, writes EEPROM, returns "Saved". |
-| `/status` | GET | JSON: filter / mode / wifi / R1+R2 connected, last band, tuning, sensors, history, uptime. |
-| `/config` | GET | JSON: stored config (Wi-Fi password omitted) with `Content-Disposition` for download. |
-| `/discover` | GET | JSON: device identity (vendor, product, version, build, hostname, IP, ports, endpoint paths). Companion to the `_bpf-so2r._tcp` mDNS service — see [Discovery](#discovery) below. |
-| `/history` | POST | `clear=YES` → wipe the band-change ring buffer in RAM. |
-| `/live` | GET | Standalone WebSocket-driven live status page (subscribes to port 81). |
-| `/bypass` | POST | `bpf=1\|2&on=0\|1`. Latches manual bypass on the named BPF (same effect as a TCI tune event). |
-| `/reboot` | POST | Soft reboot via `ESP.restart()`. |
-| `/factory_reset` | POST | Zeroes EEPROM (`confirm=YES` required); next boot lands in portal. |
+| Route | Method | Auth | Purpose |
+| --- | --- | --- | --- |
+| `/` | GET | admin | HTML form, prefilled with current config + manual‑bypass buttons + backup/restore. |
+| `/save` | POST | admin | URL‑encoded form. Updates the struct, writes EEPROM, returns "Saved". Optional `admin_pass` sets/replaces the admin password. |
+| `/status` | GET | – | JSON: filter / mode / wifi / R1+R2 connected, last band, tuning, sensors, history, uptime. |
+| `/config` | GET | – | JSON: stored config (Wi-Fi password omitted) with `Content-Disposition` for download. |
+| `/discover` | GET | – | JSON: device identity (vendor, product, version, build, hostname, IP, `auth_required`, ports, endpoint paths). Companion to the `_bpf-so2r._tcp` mDNS service — see [Discovery](#discovery) below. |
+| `/history` | POST | admin | `clear=YES` → wipe the band-change ring buffer in RAM. |
+| `/live` | GET | – | Standalone WebSocket-driven live status page (subscribes to port 81). |
+| `/bypass` | POST | admin | `bpf=1\|2&on=0\|1`. Latches manual bypass on the named BPF (same effect as a TCI tune event). |
+| `/reboot` | POST | admin | Soft reboot via `ESP.restart()`. |
+| `/factory_reset` | POST | admin | Zeroes EEPROM and the admin password (`confirm=YES` required); next boot lands in portal. |
+
+### Admin password
+
+Since v0.6.0 one admin password (user `admin`) protects the portal
+page, every route marked *admin* above, and ArduinoOTA uploads.
+
+- **Set / change:** type it into the *Admin password* field and Save
+  (max 64 characters; blank = keep the current one). It takes effect
+  immediately for both the portal and OTA.
+- **Scheme:** HTTP **Digest** (realm `BandPassFilterController`), so
+  the password isn't sent in clear over plain HTTP. Browsers prompt
+  for it; `curl --digest -u admin:<password> ...`; the companion app
+  stores it in the macOS Keychain.
+- **Storage:** NVS namespace `bpf-auth` — separate from the EEPROM
+  config page, so the schema stays at v2 and an OTA upgrade from
+  v0.5.x keeps the saved settings. Never rendered back into the form
+  or included in `/config`.
+- **No password set** (fresh flash, factory reset, `auth clear`):
+  every route and OTA are open, as before v0.6.0, and the portal shows
+  a red warning banner. `GET /discover` reports `auth_required`.
+- **Lost it:** type `auth clear` on the USB serial console.
+- Read-only routes (`/status`, `/config`, `/discover`, `/live`) and
+  the port‑81 WebSocket stay open so discovery and status views keep
+  working without credentials.
 
 ### Form layout
 
-The root page has four fieldsets:
+The root page has five fieldsets:
 
 1. **WiFi** — SSID, password, hostname (mDNS name).
 2. **Radio 1 (drives BPF 1)** — host, port, IARU region.
 3. **Radio 2 (drives BPF 2)** — host, port, IARU region.
-4. **Manual bypass** — four buttons (`BPF 1 ON / OFF`, `BPF 2 ON / OFF`).
+4. **Admin password** — write-only; blank keeps the current one.
+5. **Manual bypass** — four buttons (`BPF 1 ON / OFF`, `BPF 2 ON / OFF`).
 
 A tip below Radio 2 reminds the user that entering the same host:port
 in both radio fieldsets is the supported way to feed both filters
@@ -146,11 +171,12 @@ returns a small, static, machine-readable identity record:
   "service": "bpf-so2r",
   "vendor":  "VU3ESV",
   "product": "BandPassFilterController",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "build":   "Jan  1 2026 12:34:56",
   "hostname": "SO2R-BPF",
   "ip":       "192.168.86.39",
   "bpf_count": 2,
+  "auth_required": true,
   "ports":     { "http": 80, "ws_live": 81, "ota": 3232 },
   "endpoints": {
     "portal": "/", "status": "/status", "config": "/config",
@@ -214,7 +240,8 @@ At 115200 baud the firmware accepts a small command set:
 | Command | Effect |
 | --- | --- |
 | `status` | Prints the same JSON as `GET /status`. |
-| `reset` | Zero EEPROM and restart. |
+| `reset` | Zero EEPROM, clear the admin password and restart. |
+| `auth clear` | Clear only the admin password and restart (lost-password recovery). |
 | `bypass1 on` / `bypass1 off` | Manual bypass on BPF 1. |
 | `bypass2 on` / `bypass2 off` | Manual bypass on BPF 2. |
 
@@ -224,8 +251,9 @@ Unrecognised input is ignored.
 
 Three options:
 
-- **Web**: `POST /factory_reset` with `confirm=YES`. The root form's
-  "Factory reset" button submits this with a JS confirm dialog.
+- **Web**: `POST /factory_reset` with `confirm=YES` (needs the admin
+  password once one is set). The root form's "Factory reset" button
+  submits this with a JS confirm dialog.
 - **Serial**: type `reset` on the 115200 console.
 - **Power off + wait + power on**: not a reset; just a reboot. Use
   one of the above for an actual EEPROM wipe.

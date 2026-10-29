@@ -37,6 +37,10 @@ Single sketch: [`ESP32_SO2R_TCI/`](ESP32_SO2R_TCI/).
   all section relays released).
 - **Failsafe.** Bank is forced to bypass on boot, WiFi drop, TCI
   link drop, parse failure, or out‑of‑band frequency.
+- **Admin password** (v0.6.0+) set from the portal: HTTP Digest auth
+  on the config page and every state-changing route (save, bypass,
+  reboot, reset), and the same password for OTA uploads. Read-only
+  status / discovery stay open.
 - **16×2 I²C LCD** showing per‑radio frequency, mode, TX/RX/TU state,
   and a link indicator in column 0 (`' '` = up, `'*'` = down). 150 ms
   redraw, 400 kHz I²C, delta‑only column writes — frequency ticks

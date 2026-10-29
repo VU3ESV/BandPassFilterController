@@ -147,18 +147,26 @@ shows a hint about this under the Radio 2 section.
 
 Routes:
 
-| Route | Method | Purpose |
-| --- | --- | --- |
-| `/` | GET | HTML form |
-| `/save` | POST | URL‑encoded form, writes EEPROM, returns "Saved" |
-| `/status` | GET | JSON: filter / mode / WiFi / R1 + R2 connected + last band / sensors / history / uptime |
-| `/config` | GET | JSON: stored configuration (Wi-Fi password omitted) with `Content-Disposition` set so the browser saves as `bpf-so2r-config-<host>.json` |
-| `/discover` | GET | JSON: device identity, vendor, product, version, IP, ports, endpoint paths. See [Discovery](#discovery) below. |
-| `/history` | POST | `clear=YES` → wipe the band-change ring buffer in RAM, returns `cleared N events`. |
-| `/live` | GET | Dark-themed standalone page that connects to the live WebSocket on port 81 and renders an LCD-style view of both radios. |
-| `/bypass` | POST | `bpf=1\|2&on=0\|1` — manual force-bypass for radios that don't emit TCI tune events (see below). |
-| `/reboot` | POST | Soft reboot |
-| `/factory_reset` | POST | Zero EEPROM (requires `confirm=YES`) |
+| Route | Method | Auth | Purpose |
+| --- | --- | --- | --- |
+| `/` | GET | admin | HTML form |
+| `/save` | POST | admin | URL‑encoded form, writes EEPROM, returns "Saved" |
+| `/status` | GET | – | JSON: filter / mode / WiFi / R1 + R2 connected + last band / sensors / history / uptime |
+| `/config` | GET | – | JSON: stored configuration (Wi-Fi password omitted) with `Content-Disposition` set so the browser saves as `bpf-so2r-config-<host>.json` |
+| `/discover` | GET | – | JSON: device identity, vendor, product, version, IP, ports, endpoint paths, `auth_required`. See [Discovery](#discovery) below. |
+| `/history` | POST | admin | `clear=YES` → wipe the band-change ring buffer in RAM, returns `cleared N events`. |
+| `/live` | GET | – | Dark-themed standalone page that connects to the live WebSocket on port 81 and renders an LCD-style view of both radios. |
+| `/bypass` | POST | admin | `bpf=1\|2&on=0\|1` — manual force-bypass for radios that don't emit TCI tune events (see below). |
+| `/reboot` | POST | admin | Soft reboot |
+| `/factory_reset` | POST | admin | Zero EEPROM + admin password (requires `confirm=YES`) |
+
+**Auth** (v0.6.0+): once an admin password is set in the portal's
+*Admin password* field, the `admin` routes answer `401` with an HTTP
+**Digest** challenge (user `admin`, realm `BandPassFilterController`);
+browsers prompt for it, `curl` needs `--digest -u admin:<password>`.
+The read-only routes and the port‑81 WebSocket stay open. With no
+password set every route is open, as before, and the portal shows a
+red warning banner.
 
 ### Discovery
 
@@ -314,47 +322,41 @@ filter section while the binary is being rewritten:
 
 ### OTA password
 
-OTA defaults to **no password** (`kOtaPassword = ""` near the top of
-[ESP32_SO2R_TCI.ino](ESP32_SO2R_TCI.ino)). The service binds to the
-LAN, not the public internet, so on a trusted hamshack network this
-is a reasonable default.
+Since v0.6.0 OTA is protected by the **admin password** — the same
+one that gates the portal and its state-changing routes (see Routes
+above). It is set from the portal's *Admin password* field, stored in
+NVS (separate from the EEPROM config page, so upgrading from v0.5.x
+keeps your settings) and never compiled into the firmware or shown in
+`/config`.
 
-> **Security caveat — read before deploying on a shared LAN.** With
-> the empty default, *anyone who can reach the board's IP on UDP
-> 3232 can replace the firmware with arbitrary code.* On a guest
-> Wi-Fi VLAN, contest-site shared network, or any LAN you don't
-> fully control, you should set a password.
+> **Security caveat.** A fresh flash, a factory reset or `auth clear`
+> leaves **no password** set: *anyone who can reach the board's IP on
+> UDP 3232 can replace the firmware with arbitrary code*, and anyone on
+> the LAN can change settings or toggle bypass. Set the password right
+> after the first flash.
 
 `--upload-field password=` is mandatory either way — `arduino-cli`
 asks for it interactively otherwise and aborts in non-interactive
-shells. With the empty default, pass an empty value:
+shells. Pass the admin password, or an empty value while none is set:
 
 ```bash
-arduino-cli upload ... --port <ip> --upload-field password= ESP32_SO2R_TCI
+arduino-cli upload ... --port <ip> --upload-field password=<admin password> ESP32_SO2R_TCI
 ```
 
-The password is **only checked by the device** and travels over the
-LAN as an MD5 challenge–response, not in plaintext.
+The password is **only checked by the device**; OTA and the portal
+both use challenge–response (espota's hashed challenge, HTTP Digest),
+so it never crosses the LAN in plaintext.
 
 #### Changing the password
 
-Editing `kOtaPassword` and rebuilding is the only way to change it —
-there's no portal field on purpose, to keep the secret out of the
-HTML form and out of `/config` JSON. To rotate or enable a password,
-upload the new firmware **using the OLD value** for that single
-upload; the new value takes effect after the reboot.
+Type the new value into the portal's *Admin password* field and Save.
+It applies to the portal and to OTA immediately; only the mDNS
+`auth_upload` flag on `_arduino._tcp` refreshes at the next reboot.
+No rebuild and no USB needed.
 
-| Going from → to | `--upload-field` to use *for this one upload* |
-| --- | --- |
-| empty → set | `--upload-field password=` (empty — matches the currently-running firmware) |
-| oldval → newval | `--upload-field password=oldval` |
-| set → empty | `--upload-field password=oldval` |
-
-After reboot, all future OTAs need the new value.
-
-You only need USB if you've **lost or forgotten** the current
-password — at that point OTA can't authenticate and a USB reflash is
-the only way back in.
+You only need USB if you've **lost or forgotten** the password: type
+`auth clear` on the 115200 serial console. That clears only the
+password and reboots; the Wi-Fi and radio settings are kept.
 
 ## Status / debug
 
