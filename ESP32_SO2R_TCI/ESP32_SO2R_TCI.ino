@@ -45,6 +45,7 @@
 #include "TCI.h"
 #include "Config.h"
 #include "BcdBandPlan.h"
+#include "AdminAuth.h"
 #include "WebPortal.h"
 #include "LcdDisplay.h"
 
@@ -54,7 +55,7 @@ constexpr const char* kDefaultHostname = "SO2R-BPF";
 constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 // Bump on every meaningful release. Also surfaced in the portal
 // banner, in /status, and in /config so an OTA target is unambiguous.
-constexpr const char* kFirmwareVersion = "0.5.0";
+constexpr const char* kFirmwareVersion = "0.6.0";
 constexpr const char* kFirmwareBuild   = __DATE__ " " __TIME__;
 
 // Forward + reflected power sensor inputs (ADC1; all four are
@@ -483,31 +484,26 @@ void startStaMode() {
 // firmware with comfortable headroom (the original default.csv 1.25 MB
 // slots were already at 94% before adding OTA).
 //
-// kOtaPassword is empty by default — the OTA service binds to the LAN
-// only, and for a trusted hamshack network that's a reasonable model.
-// WARNING: with an empty value, anyone who can reach the board on UDP
-// 3232 can replace the firmware with arbitrary code. Set a non-empty
-// value if you're on a guest VLAN / shared LAN / anything you don't
-// fully control.
+// OTA uses the same admin password as the web portal (AdminAuth.h, set
+// from the portal form, stored in NVS). Empty = no password: anyone who
+// can reach the board on UDP 3232 can replace the firmware with
+// arbitrary code, so set one from the portal right after the first flash.
 //
 // `--upload-field password=<value>` is mandatory on every OTA upload
 // regardless (arduino-cli prompts interactively otherwise and aborts
-// in non-interactive shells); pass an empty value to match the empty
-// default.
+// in non-interactive shells); pass an empty value while none is set.
 //
-// Rotating the password does NOT need a USB cable: build with the new
-// kOtaPassword value, OTA-upload using the OLD password (the running
-// firmware still has the old one), and the new password takes effect
-// after the device reboots. USB is only required if you've lost the
-// current password and can't authenticate to OTA anymore.
+// Changing the password in the portal applies to OTA immediately (the
+// portal calls ArduinoOTA.setPassword()); only the mDNS `auth_upload`
+// TXT flag waits for the next reboot. No rebuild or USB needed. If the
+// password is lost, type `auth clear` on the USB serial console.
 // =============================================================================
-
-constexpr const char* kOtaPassword = "";
 
 void setupOta() {
   ArduinoOTA.setHostname(g_cfg.hostname);
-  if (kOtaPassword[0] != '\0') {
-    ArduinoOTA.setPassword(kOtaPassword);
+  String otaPass = loadAdminPassword();
+  if (otaPass.length() > 0) {
+    ArduinoOTA.setPassword(otaPass.c_str());
   }
   ArduinoOTA.onStart([]() {
     const char* type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "fs";
@@ -549,7 +545,7 @@ void setupOta() {
   });
   ArduinoOTA.begin();
   Serial.printf("[ota] ready at %s.local:3232 (password=%s)\r\n",
-                g_cfg.hostname, kOtaPassword[0] ? "yes" : "none");
+                g_cfg.hostname, otaPass.length() ? "yes" : "none");
 }
 
 // =============================================================================
@@ -668,6 +664,7 @@ void setup() {
   bpf::g_web.begin(bpf::g_cfg, bpf::statusJson,
                    [](int bpfIdx, bool on) { bpf::onTuneChange(bpfIdx, on); },
                    []() -> size_t { return bpf::clearHistory(); },
+                   [](const String& pass) { ArduinoOTA.setPassword(pass.c_str()); },
                    bpf::kFirmwareVersion, bpf::kFirmwareBuild);
 }
 
@@ -712,7 +709,9 @@ void loop() {
   }
 
   // Serial console:
-  //   reset                wipes EEPROM and reboots
+  //   reset                wipes EEPROM + admin password and reboots
+  //   auth clear           clears only the admin password and reboots
+  //                        (lost-password recovery; needs USB access)
   //   status               prints status JSON
   //   bypass{1,2} {on,off} latches manual bypass on the named BPF
   //                        (same effect as TCI tune; for AetherSDR etc.)
@@ -722,6 +721,12 @@ void loop() {
     if (line == "reset") {
       Serial.println(F("[serial] factory reset"));
       bpf::factoryReset();
+      bpf::clearAdminPassword();
+      delay(200);
+      ESP.restart();
+    } else if (line == "auth clear") {
+      Serial.println(F("[serial] admin password cleared; rebooting"));
+      bpf::clearAdminPassword();
       delay(200);
       ESP.restart();
     } else if (line == "status") {

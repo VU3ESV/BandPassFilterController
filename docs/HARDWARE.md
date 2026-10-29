@@ -170,20 +170,21 @@ when the device is configured with no password — `arduino-cli`
 prompts interactively otherwise and aborts in non-interactive shells:
 
 ```bash
-# Empty default (kOtaPassword = ""):
+# No admin password set yet (fresh flash / factory reset):
 arduino-cli upload ... --port <ip> --upload-field password= ...
-# After setting kOtaPassword = "secret":
-arduino-cli upload ... --port <ip> --upload-field password=secret ...
+# After setting the admin password in the portal:
+arduino-cli upload ... --port <ip> --upload-field password=<admin password> ...
 ```
 
-The default is empty. **On a LAN you don't fully trust, set a
-password** — anyone who can reach the board on UDP 3232 can replace
-the firmware with arbitrary code. Set the value in `kOtaPassword`
-near the top of [`../ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino`](../ESP32_SO2R_TCI/ESP32_SO2R_TCI.ino),
-recompile, and upload using the **current** (= old) password — the
-new one takes effect after the device reboots. USB reflash is only
-needed if you've forgotten the current password and can't authenticate
-to OTA.
+Since v0.6.0 OTA uses the **admin password** — the same one that
+protects the web portal (see
+[CONFIGURATION.md → Admin password](CONFIGURATION.md#admin-password)).
+It is set from the portal and stored in NVS, not compiled in, so
+changing it needs no rebuild and takes effect for OTA immediately.
+**Set one right after the first flash** — with none set, anyone who
+can reach the board on UDP 3232 can replace the firmware with
+arbitrary code. If you lose it, type `auth clear` on the USB serial
+console (clears only the password, keeps the rest of the config).
 
 ### macOS USB‑serial caveats (verified 2026‑05)
 

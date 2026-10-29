@@ -1,6 +1,11 @@
 // WebPortal.h — minimal config UI for the ESP32 SO2R/TCI controller.
-// Routes: GET /, POST /save, GET /status, GET /config, POST /reboot,
+// Routes: GET /, POST /save, GET /status, GET /config, GET /discover,
+//         POST /history, GET /live, POST /bypass, POST /reboot,
 //         POST /factory_reset.
+//
+// Auth: once an admin password is set (AdminAuth.h), GET / and every POST
+// route require HTTP Digest auth (user `admin`). The read-only JSON / live
+// routes stay open so discovery and status views keep working.
 //
 // Mirrors the ESP8266 sketches' WebPortal.h but uses the ESP32 Arduino core
 // (WebServer.h instead of ESP8266WebServer.h) and the 2-radio Config schema
@@ -12,6 +17,7 @@
 #include <WebServer.h>
 #include <functional>
 #include "Config.h"
+#include "AdminAuth.h"
 
 namespace bpf {
 
@@ -25,14 +31,19 @@ public:
   using BypassFn       = std::function<void(int, bool)>;
   // Clears the band-change ring buffer; returns the previous count.
   using ClearHistoryFn = std::function<size_t()>;
+  // Called with the new admin password after /save changes it, so the
+  // sketch can hand it to ArduinoOTA without a reboot.
+  using AdminPassFn    = std::function<void(const String&)>;
 
   void begin(Config& cfg, StatusFn statusJson, BypassFn bypassFn,
-             ClearHistoryFn clearHistoryFn,
+             ClearHistoryFn clearHistoryFn, AdminPassFn adminPassFn,
              const char* version, const char* build) {
     cfg_ = &cfg;
     statusJson_     = statusJson;
     bypassFn_       = bypassFn;
     clearHistoryFn_ = clearHistoryFn;
+    adminPassFn_    = adminPassFn;
+    adminPass_      = loadAdminPassword();
     version_        = version;
     build_          = build;
     server_.on("/",              HTTP_GET,  [this]() { handleRoot(); });
@@ -57,8 +68,23 @@ private:
   StatusFn        statusJson_;
   BypassFn        bypassFn_;
   ClearHistoryFn  clearHistoryFn_;
+  AdminPassFn     adminPassFn_;
+  String          adminPass_;          // empty = no password (open portal)
   const char*     version_ = "?";
   const char*     build_   = "?";
+
+  // Digest-auth gate for the portal page and every state-changing route.
+  // Returns true when the request may proceed; otherwise a 401 challenge
+  // has already been sent. Note the ESP32 WebServer keeps one server nonce
+  // and rotates it on every challenge, so two clients logged in at once
+  // will occasionally see a fresh 401 — both re-answer it transparently.
+  bool requireAdmin() {
+    if (adminPass_.length() == 0) return true;
+    if (server_.authenticate(kAdminUser, adminPass_.c_str())) return true;
+    server_.requestAuthentication(DIGEST_AUTH, kAuthRealm,
+                                  F("admin password required\n"));
+    return false;
+  }
 
   static String esc(const char* s) {
     String o;
@@ -129,8 +155,9 @@ private:
   }
 
   void handleRoot() {
+    if (!requireAdmin()) return;
     String h;
-    h.reserve(3200);
+    h.reserve(4200);
     h += F("<!doctype html><html><head><meta charset='utf-8'>"
            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
            "<title>BPF SO2R Controller</title><style>"
@@ -150,6 +177,12 @@ private:
     h += esc(version_); h += F("</code> built <code>");
     h += esc(build_);
     h += F("</code> &middot; <a href='/live'>live status</a></p>");
+    if (adminPass_.length() == 0) {
+      h += F("<p class='warn' style='border:1px solid;padding:.5em'>"
+             "<b>No admin password set.</b> Anyone on this network can "
+             "change these settings, toggle bypass, reboot the controller "
+             "or flash new firmware over the air. Set one below.</p>");
+    }
     h += F("<form method='POST' action='/save'>");
 
     h += F("<fieldset><legend>WiFi</legend>");
@@ -180,6 +213,16 @@ private:
            "(e.g. SunSDR2 PRO) feeds both BPFs, enter the same host/port "
            "in Radio 1 and Radio 2. The firmware opens one TCI client and "
            "routes RX-1 to BPF 1 and RX-2 to BPF 2.</p>");
+
+    // Same never-render-the-secret pattern as the Wi-Fi password above.
+    h += F("<fieldset><legend>Admin password</legend>"
+           "<p style='font-size:.85em;color:#555'>Protects this page, every "
+           "change (save, bypass, reboot, reset) and OTA firmware uploads. "
+           "User name <code>admin</code>. Lost it? Type <code>auth clear</code> "
+           "on the USB serial console.</p>"
+           "<input name='admin_pass' type='password' maxlength='64' value=''"
+           " autocomplete='new-password' placeholder='leave blank to keep current'>"
+           "</fieldset>");
 
     h += F("<button type='submit'>Save</button></form>");
     h += F("<hr><fieldset><legend>Manual bypass</legend>"
@@ -276,6 +319,14 @@ private:
   }
 
   void handleSave() {
+    if (!requireAdmin()) return;
+    // Admin password: same blank-means-keep rule as the Wi-Fi password.
+    // Validated before anything is written so a bad value saves nothing.
+    String newAdmin = server_.hasArg("admin_pass") ? server_.arg("admin_pass") : String();
+    if (newAdmin.length() > kAdminPassMax) {
+      server_.send(400, "text/plain", "admin password too long (max 64)");
+      return;
+    }
     copyArg("ssid",     cfg_->wifi_ssid, sizeof(cfg_->wifi_ssid));
     // Wi-Fi password: the form renders an empty field by design; an
     // empty submitted value means "keep the existing password", so we
@@ -297,6 +348,11 @@ private:
                   cfg_->radio2_host, sizeof(cfg_->radio2_host),
                   &cfg_->radio2_port, &cfg_->radio2_iaru);
     save(*cfg_);
+    if (newAdmin.length() > 0) {
+      saveAdminPassword(newAdmin);
+      adminPass_ = newAdmin;               // web gate: effective immediately
+      if (adminPassFn_) adminPassFn_(newAdmin);   // OTA: likewise
+    }
     server_.send(200, "text/html",
                  F("<p>Saved.</p>"
                    "<p><a href='/'>Back</a> &middot; "
@@ -354,6 +410,7 @@ private:
     j += F("\"hostname\":\""); j += jsonEsc(cfg_->hostname); j += F("\",");
     j += F("\"ip\":\"");      j += WiFi.localIP().toString(); j += F("\",");
     j += F("\"bpf_count\":2,");
+    j += F("\"auth_required\":"); j += (adminPass_.length() ? "true" : "false"); j += F(",");
     j += F("\"ports\":{\"http\":80,\"ws_live\":81,\"ota\":3232},");
     j += F("\"endpoints\":{"
            "\"portal\":\"/\","
@@ -370,6 +427,7 @@ private:
   // POST /history?clear=YES — clears the band-change ring buffer in
   // RAM. Confirmation is required so a stray POST can't wipe the log.
   void handleHistoryClear() {
+    if (!requireAdmin()) return;
     if (!clearHistoryFn_) { server_.send(503, "text/plain", "no handler"); return; }
     if (server_.arg("clear") != "YES") {
       server_.send(400, "text/plain", "clear=YES required");
@@ -438,6 +496,7 @@ private:
   }
 
   void handleBypass() {
+    if (!requireAdmin()) return;
     if (!bypassFn_) { server_.send(503, "text/plain", "no bypass handler"); return; }
     if (!server_.hasArg("bpf") || !server_.hasArg("on")) {
       server_.send(400, "text/plain", "need bpf=1|2 and on=0|1");
@@ -457,17 +516,20 @@ private:
   }
 
   void handleReboot() {
+    if (!requireAdmin()) return;
     server_.send(200, "text/plain", "rebooting");
     delay(200);
     ESP.restart();
   }
 
   void handleFactoryReset() {
+    if (!requireAdmin()) return;
     if (server_.arg("confirm") != "YES") {
       server_.send(400, "text/plain", "confirm=YES required");
       return;
     }
     factoryReset();
+    clearAdminPassword();
     server_.send(200, "text/plain", "wiped; rebooting");
     delay(200);
     ESP.restart();

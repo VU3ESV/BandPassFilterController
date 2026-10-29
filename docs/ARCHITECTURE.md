@@ -34,7 +34,8 @@ match, computed in `isSharedTciConfig()` at boot.
 | `ESP32_SO2R_TCI.ino` | `setup()` / `loop()`, globals, all TCI event handlers (dual + shared), `applyBand()` + bypass policy, WiFi mode bring‑up, failsafe + LCD link‑status polling. |
 | `Config.h` | `struct Config` (two radio endpoints), magic/version/CRC32 EEPROM read/write, factory reset. Schema version `2`. |
 | `BcdBandPlan.h` | `bcdFor(hz)` → Yaesu Table 5 code; `nearestWarcBypass(hz)` → safe bypass code; `BcdBank` GPIO struct + `driveBank()` (active‑LOW). |
-| `WebPortal.h` | `WebServer` routes `/`, `/save`, `/status`, `/bypass`, `/reboot`, `/factory_reset`. Callbacks back to the .ino for status JSON and manual bypass. |
+| `AdminAuth.h` | Admin password in NVS (`Preferences`, namespace `bpf-auth`): load / save / clear. Shared by the portal's Digest gate and ArduinoOTA. |
+| `WebPortal.h` | `WebServer` routes `/`, `/save`, `/status`, `/bypass`, `/reboot`, `/factory_reset`. `requireAdmin()` Digest gate on `/` and every POST route once a password is set. Callbacks back to the .ino for status JSON, manual bypass and OTA password changes. |
 | `LcdDisplay.h` | 16×2 I²C LCD wrapper. FreeRTOS task pinned to core 1, mutex‑protected cached state, delta‑only column writes at 150 ms / 400 kHz I²C. |
 | `TCI.h` / `TCI.cpp` | Bundled IW7DMH TCI WebSocket client. Locally patched (quoted `RTX.h` include; `Unhandled message!` log gated; tune‑substring diagnostic tap). |
 | `RTX.h` / `RTX.cpp` | TCI library's per‑rig state container (VFO/mode/TRX/tune/etc.). Two instances per TCI client. |
