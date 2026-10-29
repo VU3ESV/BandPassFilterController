@@ -55,7 +55,7 @@ constexpr const char* kDefaultHostname = "SO2R-BPF";
 constexpr const char* kFilterLabel     = "ESP32 SO2R / TCI";
 // Bump on every meaningful release. Also surfaced in the portal
 // banner, in /status, and in /config so an OTA target is unambiguous.
-constexpr const char* kFirmwareVersion = "0.6.0";
+constexpr const char* kFirmwareVersion = "0.6.1";
 constexpr const char* kFirmwareBuild   = __DATE__ " " __TIME__;
 
 // Forward + reflected power sensor inputs (ADC1; all four are

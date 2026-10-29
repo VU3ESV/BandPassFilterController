@@ -202,8 +202,10 @@ lives in NVS (`bpf-auth`), not in the EEPROM Config page, so it needed
 no schema bump and is never compiled in. Set/replace it from the
 portal (blank = keep); empty = everything open as before v0.6.0, with
 a red banner on the portal. The port‑81 WebSocket is read‑only and
-stays open. The companion macOS app answers the Digest challenge with
-a Keychain-stored password.
+stays open. Only Digest is accepted: `requireAdmin()` refuses Basic
+credentials (v0.6.1), which would carry the password in clear. The
+companion macOS app answers the Digest challenge with a Keychain-stored
+password.
 
 Serial commands at 115200: `status`, `reset` (also clears the admin
 password), `auth clear` (lost-password recovery: clears only the

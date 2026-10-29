@@ -62,7 +62,8 @@ page, every route marked *admin* above, and ArduinoOTA uploads.
   (max 64 characters; blank = keep the current one). It takes effect
   immediately for both the portal and OTA.
 - **Scheme:** HTTP **Digest** (realm `BandPassFilterController`), so
-  the password isn't sent in clear over plain HTTP. Browsers prompt
+  the password isn't sent in clear over plain HTTP. Basic credentials
+  are refused (v0.6.1+), even when the password is right. Browsers prompt
   for it; `curl --digest -u admin:<password> ...`; the companion app
   stores it in the macOS Keychain.
 - **Storage:** NVS namespace `bpf-auth` — separate from the EEPROM
