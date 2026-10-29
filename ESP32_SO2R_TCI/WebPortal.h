@@ -78,9 +78,17 @@ private:
   // has already been sent. Note the ESP32 WebServer keeps one server nonce
   // and rotates it on every challenge, so two clients logged in at once
   // will occasionally see a fresh 401 — both re-answer it transparently.
+  // Digest only: WebServer would also accept Basic credentials, which carry
+  // the password in clear, so the check callback refuses any other scheme.
   bool requireAdmin() {
     if (adminPass_.length() == 0) return true;
-    if (server_.authenticate(kAdminUser, adminPass_.c_str())) return true;
+    bool ok = server_.authenticate(
+        [this](HTTPAuthMethod mode, String user, String params[]) -> String* {
+          (void)params;
+          if (mode != DIGEST_AUTH) return nullptr;
+          return user.equalsConstantTime(kAdminUser) ? new String(adminPass_) : nullptr;
+        });
+    if (ok) return true;
     server_.requestAuthentication(DIGEST_AUTH, kAuthRealm,
                                   F("admin password required\n"));
     return false;

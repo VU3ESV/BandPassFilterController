@@ -164,6 +164,8 @@ Routes:
 *Admin password* field, the `admin` routes answer `401` with an HTTP
 **Digest** challenge (user `admin`, realm `BandPassFilterController`);
 browsers prompt for it, `curl` needs `--digest -u admin:<password>`.
+Basic credentials are refused (v0.6.1+), since they would carry the
+password in clear.
 The read-only routes and the port‑81 WebSocket stay open. With no
 password set every route is open, as before, and the portal shows a
 red warning banner.
